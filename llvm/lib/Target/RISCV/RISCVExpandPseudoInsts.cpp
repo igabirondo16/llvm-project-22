@@ -60,6 +60,8 @@ private:
                            MachineBasicBlock::iterator MBBI);
   bool expandXRLoadStore8(MachineBasicBlock &MBB,
                           MachineBasicBlock::iterator MBBI);
+  bool expandXRVLoad(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI);
+  bool expandXRMAC(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI);
   bool expandPseudoReadVLENBViaVSETVLIX0(MachineBasicBlock &MBB,
                                          MachineBasicBlock::iterator MBBI);
 #ifndef NDEBUG
@@ -125,6 +127,17 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case RISCV::PseudoXRLoad8:
   case RISCV::PseudoXRStore8:
     return expandXRLoadStore8(MBB, MBBI);
+  case RISCV::PseudoXRVLoad:
+    return expandXRVLoad(MBB, MBBI);
+  case RISCV::PseudoXRMAC_SSS:
+  case RISCV::PseudoXRMAC_SSV:
+  case RISCV::PseudoXRMAC_SVS:
+  case RISCV::PseudoXRMAC_SVV:
+  case RISCV::PseudoXRMAC_VSS:
+  case RISCV::PseudoXRMAC_VSV:
+  case RISCV::PseudoXRMAC_VVS:
+  case RISCV::PseudoXRMAC_VVV:
+    return expandXRMAC(MBB, MBBI);
   case RISCV::PseudoCCMOVGPRNoX0:
   case RISCV::PseudoCCMOVGPR:
   case RISCV::PseudoCCADD:
@@ -603,6 +616,76 @@ bool RISCVExpandPseudo::expandXRLoadStore8(MachineBasicBlock &MBB,
       MMOs.push_back(MF->getMachineMemOperand(MMO, 4 * I, 4));
     MIB.setMemRefs(MMOs);
   }
+
+  MBBI->eraseFromParent();
+  return true;
+}
+
+// Expands PseudoXRVLoad into a LW of the first element of the XRepeat vector
+// register followed by a REPEAT whose mask walks rd. The REPEAT carries the
+// whole register as an implicit def, and the base as an implicit use since it
+// is read again on every step.
+bool RISCVExpandPseudo::expandXRVLoad(MachineBasicBlock &MBB,
+                                      MachineBasicBlock::iterator MBBI) {
+  DebugLoc DL = MBBI->getDebugLoc();
+  const TargetRegisterInfo *TRI = STI->getRegisterInfo();
+  Register VReg = MBBI->getOperand(0).getReg();
+  const MachineOperand &Base = MBBI->getOperand(1);
+  const MachineOperand &Stride = MBBI->getOperand(3);
+  const MachineOperand &Count = MBBI->getOperand(4);
+
+  BuildMI(MBB, MBBI, DL, TII->get(RISCV::LW),
+          TRI->getSubReg(VReg, RISCV::sub_xr0))
+      .addReg(Base.getReg())
+      .add(MBBI->getOperand(2))
+      .setMemRefs(MBBI->memoperands());
+  BuildMI(MBB, MBBI, DL, TII->get(RISCV::XR_REPEAT))
+      .addImm(0b0001)
+      .addReg(Stride.getReg(), getKillRegState(Stride.isKill()))
+      .addReg(Count.getReg(), getKillRegState(Count.isKill()))
+      .addReg(VReg, RegState::ImplicitDefine)
+      .addReg(Base.getReg(), RegState::Implicit | getKillRegState(Base.isKill()));
+
+  MBBI->eraseFromParent();
+  return true;
+}
+
+// Expands PseudoXRMAC_* into an XR_MAC on the first element of each XRepeat
+// vector operand followed by a REPEAT. The mask walks rd and every source that
+// is an XRepeat vector register; scalar sources stay fixed. MAC repeats don't
+// use the stride, so it is x0.
+bool RISCVExpandPseudo::expandXRMAC(MachineBasicBlock &MBB,
+                                    MachineBasicBlock::iterator MBBI) {
+  DebugLoc DL = MBBI->getDebugLoc();
+  const TargetRegisterInfo *TRI = STI->getRegisterInfo();
+  Register VReg = MBBI->getOperand(0).getReg();
+  const MachineOperand &Count = MBBI->getOperand(4);
+
+  unsigned Mask = 0b0001;
+  Register First[3];
+  for (unsigned I = 0; I < 3; ++I) {
+    Register Reg = MBBI->getOperand(I + 1).getReg();
+    if (RISCV::XRVecRegClass.contains(Reg)) {
+      Mask |= 1 << (I + 1);
+      First[I] = TRI->getSubReg(Reg, RISCV::sub_xr0);
+    } else {
+      First[I] = Reg;
+    }
+  }
+
+  BuildMI(MBB, MBBI, DL, TII->get(RISCV::XR_MAC),
+          TRI->getSubReg(VReg, RISCV::sub_xr0))
+      .addReg(First[0])
+      .addReg(First[1])
+      .addReg(First[2]);
+  MachineInstrBuilder Repeat =
+      BuildMI(MBB, MBBI, DL, TII->get(RISCV::XR_REPEAT))
+          .addImm(Mask)
+          .addReg(RISCV::X0)
+          .addReg(Count.getReg(), getKillRegState(Count.isKill()))
+          .addReg(VReg, RegState::ImplicitDefine);
+  for (unsigned I = 1; I <= 3; ++I)
+    Repeat.addReg(MBBI->getOperand(I).getReg(), RegState::Implicit);
 
   MBBI->eraseFromParent();
   return true;

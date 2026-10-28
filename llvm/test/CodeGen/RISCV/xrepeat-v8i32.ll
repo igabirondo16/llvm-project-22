@@ -16,14 +16,10 @@ define void @copy(ptr %src, ptr %dst) {
 ; CHECK-NEXT:    .cfi_offset s9, -8
 ; CHECK-NEXT:    .cfi_offset s10, -12
 ; CHECK-NEXT:    .cfi_offset s11, -16
+; CHECK-NEXT:    li a2, 7
+; CHECK-NEXT:    li a3, 4
 ; CHECK-NEXT:    lw s8, 0(a0)
-; CHECK-NEXT:    lw s9, 4(a0)
-; CHECK-NEXT:    lw s10, 8(a0)
-; CHECK-NEXT:    lw s11, 12(a0)
-; CHECK-NEXT:    lw t3, 16(a0)
-; CHECK-NEXT:    lw t4, 20(a0)
-; CHECK-NEXT:    lw t5, 24(a0)
-; CHECK-NEXT:    lw t6, 28(a0)
+; CHECK-NEXT:    xr.repeat 1, a3, a2
 ; CHECK-NEXT:    sw s8, 0(a1)
 ; CHECK-NEXT:    sw s9, 4(a1)
 ; CHECK-NEXT:    sw s10, 8(a1)
@@ -81,18 +77,14 @@ define void @spill(ptr %a, ptr %b, ptr %c, ptr %d) {
 ; CHECK-NEXT:    .cfi_offset s9, -44
 ; CHECK-NEXT:    .cfi_offset s10, -48
 ; CHECK-NEXT:    .cfi_offset s11, -52
-; CHECK-NEXT:    mv t0, a3
-; CHECK-NEXT:    mv t1, a2
+; CHECK-NEXT:    sw a3, 8(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw a2, 4(sp) # 4-byte Folded Spill
 ; CHECK-NEXT:    mv t2, a1
 ; CHECK-NEXT:    mv ra, a0
+; CHECK-NEXT:    li a0, 7
+; CHECK-NEXT:    li a1, 4
 ; CHECK-NEXT:    lw s8, 0(a3)
-; CHECK-NEXT:    lw s9, 4(a3)
-; CHECK-NEXT:    lw s10, 8(a3)
-; CHECK-NEXT:    lw s11, 12(a3)
-; CHECK-NEXT:    lw t3, 16(a3)
-; CHECK-NEXT:    lw t4, 20(a3)
-; CHECK-NEXT:    lw t5, 24(a3)
-; CHECK-NEXT:    lw t6, 28(a3)
+; CHECK-NEXT:    xr.repeat 1, a1, a0
 ; CHECK-NEXT:    sw s8, 12(sp) # 4-byte Folded Spill
 ; CHECK-NEXT:    sw s9, 16(sp) # 4-byte Folded Spill
 ; CHECK-NEXT:    sw s10, 20(sp) # 4-byte Folded Spill
@@ -102,29 +94,15 @@ define void @spill(ptr %a, ptr %b, ptr %c, ptr %d) {
 ; CHECK-NEXT:    sw t5, 36(sp) # 4-byte Folded Spill
 ; CHECK-NEXT:    sw t6, 40(sp) # 4-byte Folded Spill
 ; CHECK-NEXT:    lw a6, 0(a2)
-; CHECK-NEXT:    lw a7, 4(a2)
-; CHECK-NEXT:    lw s2, 8(a2)
-; CHECK-NEXT:    lw s3, 12(a2)
-; CHECK-NEXT:    lw s4, 16(a2)
-; CHECK-NEXT:    lw s5, 20(a2)
-; CHECK-NEXT:    lw s6, 24(a2)
-; CHECK-NEXT:    lw s7, 28(a2)
+; CHECK-NEXT:    xr.repeat 1, a1, a0
+; CHECK-NEXT:    li t3, 4
+; CHECK-NEXT:    li t0, 7
 ; CHECK-NEXT:    lw s0, 0(t2)
-; CHECK-NEXT:    lw s1, 4(t2)
-; CHECK-NEXT:    lw a0, 8(t2)
-; CHECK-NEXT:    lw a1, 12(t2)
-; CHECK-NEXT:    lw a2, 16(t2)
-; CHECK-NEXT:    lw a3, 20(t2)
-; CHECK-NEXT:    lw a4, 24(t2)
-; CHECK-NEXT:    lw a5, 28(t2)
+; CHECK-NEXT:    xr.repeat 1, t3, t0
+; CHECK-NEXT:    li t0, 4
+; CHECK-NEXT:    li t1, 7
 ; CHECK-NEXT:    lw s8, 0(ra)
-; CHECK-NEXT:    lw s9, 4(ra)
-; CHECK-NEXT:    lw s10, 8(ra)
-; CHECK-NEXT:    lw s11, 12(ra)
-; CHECK-NEXT:    lw t3, 16(ra)
-; CHECK-NEXT:    lw t4, 20(ra)
-; CHECK-NEXT:    lw t5, 24(ra)
-; CHECK-NEXT:    lw t6, 28(ra)
+; CHECK-NEXT:    xr.repeat 1, t0, t1
 ; CHECK-NEXT:    sw s8, 44(sp) # 4-byte Folded Spill
 ; CHECK-NEXT:    sw s9, 48(sp) # 4-byte Folded Spill
 ; CHECK-NEXT:    sw s10, 52(sp) # 4-byte Folded Spill
@@ -157,14 +135,15 @@ define void @spill(ptr %a, ptr %b, ptr %c, ptr %d) {
 ; CHECK-NEXT:    sw s5, 20(t2)
 ; CHECK-NEXT:    sw s6, 24(t2)
 ; CHECK-NEXT:    sw s7, 28(t2)
-; CHECK-NEXT:    sw s0, 0(t1)
-; CHECK-NEXT:    sw s1, 4(t1)
-; CHECK-NEXT:    sw a0, 8(t1)
-; CHECK-NEXT:    sw a1, 12(t1)
-; CHECK-NEXT:    sw a2, 16(t1)
-; CHECK-NEXT:    sw a3, 20(t1)
-; CHECK-NEXT:    sw a4, 24(t1)
-; CHECK-NEXT:    sw a5, 28(t1)
+; CHECK-NEXT:    lw a6, 4(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    sw s0, 0(a6)
+; CHECK-NEXT:    sw s1, 4(a6)
+; CHECK-NEXT:    sw a0, 8(a6)
+; CHECK-NEXT:    sw a1, 12(a6)
+; CHECK-NEXT:    sw a2, 16(a6)
+; CHECK-NEXT:    sw a3, 20(a6)
+; CHECK-NEXT:    sw a4, 24(a6)
+; CHECK-NEXT:    sw a5, 28(a6)
 ; CHECK-NEXT:    lw s8, 44(sp) # 4-byte Folded Reload
 ; CHECK-NEXT:    lw s9, 48(sp) # 4-byte Folded Reload
 ; CHECK-NEXT:    lw s10, 52(sp) # 4-byte Folded Reload
@@ -173,14 +152,15 @@ define void @spill(ptr %a, ptr %b, ptr %c, ptr %d) {
 ; CHECK-NEXT:    lw t4, 64(sp) # 4-byte Folded Reload
 ; CHECK-NEXT:    lw t5, 68(sp) # 4-byte Folded Reload
 ; CHECK-NEXT:    lw t6, 72(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    sw s8, 0(t0)
-; CHECK-NEXT:    sw s9, 4(t0)
-; CHECK-NEXT:    sw s10, 8(t0)
-; CHECK-NEXT:    sw s11, 12(t0)
-; CHECK-NEXT:    sw t3, 16(t0)
-; CHECK-NEXT:    sw t4, 20(t0)
-; CHECK-NEXT:    sw t5, 24(t0)
-; CHECK-NEXT:    sw t6, 28(t0)
+; CHECK-NEXT:    lw a0, 8(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    sw s8, 0(a0)
+; CHECK-NEXT:    sw s9, 4(a0)
+; CHECK-NEXT:    sw s10, 8(a0)
+; CHECK-NEXT:    sw s11, 12(a0)
+; CHECK-NEXT:    sw t3, 16(a0)
+; CHECK-NEXT:    sw t4, 20(a0)
+; CHECK-NEXT:    sw t5, 24(a0)
+; CHECK-NEXT:    sw t6, 28(a0)
 ; CHECK-NEXT:    lw ra, 124(sp) # 4-byte Folded Reload
 ; CHECK-NEXT:    lw s0, 120(sp) # 4-byte Folded Reload
 ; CHECK-NEXT:    lw s1, 116(sp) # 4-byte Folded Reload
@@ -225,109 +205,37 @@ define void @spill(ptr %a, ptr %b, ptr %c, ptr %d) {
 define void @add(ptr %a, ptr %b) {
 ; CHECK-LABEL: add:
 ; CHECK:       # %bb.0:
-; CHECK-NEXT:    addi sp, sp, -160
-; CHECK-NEXT:    .cfi_def_cfa_offset 160
-; CHECK-NEXT:    sw ra, 156(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s0, 152(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s2, 148(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s3, 144(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s4, 140(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s5, 136(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s6, 132(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s7, 128(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s8, 124(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s9, 120(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s10, 116(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    sw s11, 112(sp) # 4-byte Folded Spill
-; CHECK-NEXT:    .cfi_offset ra, -4
-; CHECK-NEXT:    .cfi_offset s0, -8
-; CHECK-NEXT:    .cfi_offset s2, -12
-; CHECK-NEXT:    .cfi_offset s3, -16
-; CHECK-NEXT:    .cfi_offset s4, -20
-; CHECK-NEXT:    .cfi_offset s5, -24
-; CHECK-NEXT:    .cfi_offset s6, -28
-; CHECK-NEXT:    .cfi_offset s7, -32
-; CHECK-NEXT:    .cfi_offset s8, -36
-; CHECK-NEXT:    .cfi_offset s9, -40
-; CHECK-NEXT:    .cfi_offset s10, -44
-; CHECK-NEXT:    .cfi_offset s11, -48
-; CHECK-NEXT:    addi s0, sp, 160
-; CHECK-NEXT:    .cfi_def_cfa s0, 0
-; CHECK-NEXT:    andi sp, sp, -32
-; CHECK-NEXT:    lw s8, 0(a1)
-; CHECK-NEXT:    lw s9, 4(a1)
-; CHECK-NEXT:    lw s10, 8(a1)
-; CHECK-NEXT:    lw s11, 12(a1)
-; CHECK-NEXT:    lw t3, 16(a1)
-; CHECK-NEXT:    lw t4, 20(a1)
-; CHECK-NEXT:    lw t5, 24(a1)
-; CHECK-NEXT:    lw t6, 28(a1)
-; CHECK-NEXT:    lw a6, 0(a0)
-; CHECK-NEXT:    lw a7, 4(a0)
-; CHECK-NEXT:    lw s2, 8(a0)
-; CHECK-NEXT:    lw s3, 12(a0)
-; CHECK-NEXT:    lw s4, 16(a0)
-; CHECK-NEXT:    lw s5, 20(a0)
-; CHECK-NEXT:    lw s6, 24(a0)
-; CHECK-NEXT:    lw s7, 28(a0)
-; CHECK-NEXT:    addi a1, sp, 32
-; CHECK-NEXT:    sw s8, 0(a1)
-; CHECK-NEXT:    sw s9, 4(a1)
-; CHECK-NEXT:    sw s10, 8(a1)
-; CHECK-NEXT:    sw s11, 12(a1)
-; CHECK-NEXT:    sw t3, 16(a1)
-; CHECK-NEXT:    sw t4, 20(a1)
-; CHECK-NEXT:    sw t5, 24(a1)
-; CHECK-NEXT:    sw t6, 28(a1)
-; CHECK-NEXT:    mv a1, sp
-; CHECK-NEXT:    sw a6, 0(a1)
-; CHECK-NEXT:    sw a7, 4(a1)
-; CHECK-NEXT:    sw s2, 8(a1)
-; CHECK-NEXT:    sw s3, 12(a1)
-; CHECK-NEXT:    sw s4, 16(a1)
-; CHECK-NEXT:    sw s5, 20(a1)
-; CHECK-NEXT:    sw s6, 24(a1)
-; CHECK-NEXT:    sw s7, 28(a1)
-; CHECK-NEXT:    lw a1, 60(sp)
-; CHECK-NEXT:    lw a2, 28(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 92(sp)
-; CHECK-NEXT:    lw a1, 56(sp)
-; CHECK-NEXT:    lw a2, 24(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 88(sp)
-; CHECK-NEXT:    lw a1, 52(sp)
-; CHECK-NEXT:    lw a2, 20(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 84(sp)
-; CHECK-NEXT:    lw a1, 48(sp)
-; CHECK-NEXT:    lw a2, 16(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 80(sp)
-; CHECK-NEXT:    lw a1, 44(sp)
-; CHECK-NEXT:    lw a2, 12(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 76(sp)
-; CHECK-NEXT:    lw a1, 40(sp)
-; CHECK-NEXT:    lw a2, 8(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 72(sp)
-; CHECK-NEXT:    lw a1, 36(sp)
-; CHECK-NEXT:    lw a2, 4(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 68(sp)
-; CHECK-NEXT:    lw a1, 32(sp)
-; CHECK-NEXT:    lw a2, 0(sp)
-; CHECK-NEXT:    add a1, a2, a1
-; CHECK-NEXT:    sw a1, 64(sp)
-; CHECK-NEXT:    lw s8, 64(sp)
-; CHECK-NEXT:    lw s9, 68(sp)
-; CHECK-NEXT:    lw s10, 72(sp)
-; CHECK-NEXT:    lw s11, 76(sp)
-; CHECK-NEXT:    lw t3, 80(sp)
-; CHECK-NEXT:    lw t4, 84(sp)
-; CHECK-NEXT:    lw t5, 88(sp)
-; CHECK-NEXT:    lw t6, 92(sp)
+; CHECK-NEXT:    addi sp, sp, -48
+; CHECK-NEXT:    .cfi_def_cfa_offset 48
+; CHECK-NEXT:    sw s2, 44(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s3, 40(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s4, 36(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s5, 32(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s6, 28(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s7, 24(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s8, 20(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s9, 16(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s10, 12(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    sw s11, 8(sp) # 4-byte Folded Spill
+; CHECK-NEXT:    .cfi_offset s2, -4
+; CHECK-NEXT:    .cfi_offset s3, -8
+; CHECK-NEXT:    .cfi_offset s4, -12
+; CHECK-NEXT:    .cfi_offset s5, -16
+; CHECK-NEXT:    .cfi_offset s6, -20
+; CHECK-NEXT:    .cfi_offset s7, -24
+; CHECK-NEXT:    .cfi_offset s8, -28
+; CHECK-NEXT:    .cfi_offset s9, -32
+; CHECK-NEXT:    .cfi_offset s10, -36
+; CHECK-NEXT:    .cfi_offset s11, -40
+; CHECK-NEXT:    li a2, 7
+; CHECK-NEXT:    li a3, 4
+; CHECK-NEXT:    lw s8, 0(a0)
+; CHECK-NEXT:    xr.repeat 1, a3, a2
+; CHECK-NEXT:    lw a6, 0(a1)
+; CHECK-NEXT:    xr.repeat 1, a3, a2
+; CHECK-NEXT:    li a1, 1
+; CHECK-NEXT:    xr.mac s8, a1, a6, s8
+; CHECK-NEXT:    xr.repeat 13, zero, a2
 ; CHECK-NEXT:    sw s8, 0(a0)
 ; CHECK-NEXT:    sw s9, 4(a0)
 ; CHECK-NEXT:    sw s10, 8(a0)
@@ -336,22 +244,16 @@ define void @add(ptr %a, ptr %b) {
 ; CHECK-NEXT:    sw t4, 20(a0)
 ; CHECK-NEXT:    sw t5, 24(a0)
 ; CHECK-NEXT:    sw t6, 28(a0)
-; CHECK-NEXT:    addi sp, s0, -160
-; CHECK-NEXT:    .cfi_def_cfa sp, 160
-; CHECK-NEXT:    lw ra, 156(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s0, 152(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s2, 148(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s3, 144(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s4, 140(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s5, 136(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s6, 132(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s7, 128(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s8, 124(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s9, 120(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s10, 116(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    lw s11, 112(sp) # 4-byte Folded Reload
-; CHECK-NEXT:    .cfi_restore ra
-; CHECK-NEXT:    .cfi_restore s0
+; CHECK-NEXT:    lw s2, 44(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s3, 40(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s4, 36(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s5, 32(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s6, 28(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s7, 24(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s8, 20(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s9, 16(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s10, 12(sp) # 4-byte Folded Reload
+; CHECK-NEXT:    lw s11, 8(sp) # 4-byte Folded Reload
 ; CHECK-NEXT:    .cfi_restore s2
 ; CHECK-NEXT:    .cfi_restore s3
 ; CHECK-NEXT:    .cfi_restore s4
@@ -362,7 +264,7 @@ define void @add(ptr %a, ptr %b) {
 ; CHECK-NEXT:    .cfi_restore s9
 ; CHECK-NEXT:    .cfi_restore s10
 ; CHECK-NEXT:    .cfi_restore s11
-; CHECK-NEXT:    addi sp, sp, 160
+; CHECK-NEXT:    addi sp, sp, 48
 ; CHECK-NEXT:    .cfi_def_cfa_offset 0
 ; CHECK-NEXT:    ret
   %va = load <8 x i32>, ptr %a, align 4

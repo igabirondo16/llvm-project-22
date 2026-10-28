@@ -7,8 +7,8 @@
 
 define void @ops(<8 x i32> %a, <8 x i32> %b, i32 %s, i32 %i, <8 x i16> %h) {
 ; CHECK-LABEL: 'ops'
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 32 for instruction: %add = add <8 x i32> %a, %b
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 32 for instruction: %mul = mul <8 x i32> %a, %b
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %add = add <8 x i32> %a, %b
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %mul = mul <8 x i32> %a, %b
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 32 for instruction: %xor = xor <8 x i32> %a, %b
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %ext = extractelement <8 x i32> %a, i32 3
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %extv = extractelement <8 x i32> %a, i32 %i
@@ -17,7 +17,7 @@ define void @ops(<8 x i32> %a, <8 x i32> %b, i32 %s, i32 %i, <8 x i16> %h) {
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 16 for instruction: %rev = shufflevector <8 x i32> %a, <8 x i32> poison, <8 x i32> <i32 7, i32 6, i32 5, i32 4, i32 3, i32 2, i32 1, i32 0>
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %sx = sext <8 x i16> %h to <8 x i32>
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 0 for instruction: %tr = trunc <8 x i32> %a to <8 x i16>
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 121 for instruction: %red = call i32 @llvm.vector.reduce.add.v8i32(<8 x i32> %a)
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 52 for instruction: %red = call i32 @llvm.vector.reduce.add.v8i32(<8 x i32> %a)
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 0 for instruction: ret void
 ;
   %add = add <8 x i32> %a, %b

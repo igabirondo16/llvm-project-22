@@ -803,19 +803,26 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
 
   if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions()) {
-    // XRepeat: <8 x i32> loads, stores and copies are native. Every other
-    // operation is expanded, which scalarizes it.
+    // XRepeat: <8 x i32> loads, stores and copies are native, and add, sub
+    // and mul are selected to MAC + REPEAT. Every other operation is
+    // expanded, which scalarizes it.
     for (unsigned Op = 0; Op < ISD::BUILTIN_OP_END; ++Op) {
       switch (Op) {
       case ISD::LOAD:
       case ISD::STORE:
       case ISD::UNDEF:
       case ISD::FREEZE:
+      case ISD::ADD:
+      case ISD::SUB:
+      case ISD::MUL:
         break;
       default:
         setOperationAction(Op, MVT::v8i32, Expand);
       }
     }
+    // Splats become XR_SPLAT (MAC reads the scalar directly) and shifts by a
+    // constant become a multiply by a power of two.
+    setOperationAction({ISD::BUILD_VECTOR, ISD::SHL}, MVT::v8i32, Custom);
     // No extending loads into, or truncating stores from, <8 x i32>.
     for (MVT VT : MVT::fixedlen_vector_valuetypes()) {
       setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, MVT::v8i32,
@@ -7778,8 +7785,42 @@ RISCVTargetLowering::lowerXAndesBfHCvtBFloat16Store(SDValue Op,
       ST->getMemOperand());
 }
 
+// Custom lowering of the v8i32 operations XRepeat marks Custom. Returning an
+// empty SDValue falls back to expansion (scalarization).
+static SDValue lowerXRepeatOperation(SDValue Op, SelectionDAG &DAG) {
+  SDLoc DL(Op);
+  MVT VT = Op.getSimpleValueType();
+  switch (Op.getOpcode()) {
+  default:
+    return SDValue();
+  case ISD::BUILD_VECTOR: {
+    SDValue Splat = cast<BuildVectorSDNode>(Op)->getSplatValue();
+    if (!Splat || Splat.getValueType() != MVT::i32)
+      return SDValue();
+    return DAG.getNode(RISCVISD::XR_SPLAT, DL, VT, Splat);
+  }
+  case ISD::SHL: {
+    // a << k == a * (1 << k).
+    SDValue Amt = Op.getOperand(1);
+    if (Amt.getOpcode() == RISCVISD::XR_SPLAT)
+      Amt = Amt.getOperand(0);
+    ConstantSDNode *C = isConstOrConstSplat(Amt);
+    if (!C || C->getAPIntValue().uge(32))
+      return SDValue();
+    SDValue Factor = DAG.getConstant(
+        APInt::getOneBitSet(32, C->getZExtValue()), DL, MVT::i32);
+    return DAG.getNode(ISD::MUL, DL, VT, Op.getOperand(0),
+                       DAG.getNode(RISCVISD::XR_SPLAT, DL, VT, Factor));
+  }
+  }
+}
+
 SDValue RISCVTargetLowering::LowerOperation(SDValue Op,
                                             SelectionDAG &DAG) const {
+  if (Op.getValueType() == MVT::v8i32 && Subtarget.hasVendorXRepeat() &&
+      !Subtarget.hasVInstructions())
+    return lowerXRepeatOperation(Op, DAG);
+
   switch (Op.getOpcode()) {
   default:
     reportFatalInternalError(

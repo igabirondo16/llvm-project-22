@@ -50,6 +50,7 @@ define void @reverse(ptr %pa, ptr %out) {
 }
 
 ; CHECK-LABEL: dot:
+; CHECK: xr.mac
 define i32 @dot(ptr %pa, ptr %pb) {
   %a = load <8 x i32>, ptr %pa, align 4
   %b = load <8 x i32>, ptr %pb, align 4
