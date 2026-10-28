@@ -675,6 +675,10 @@ RISCVTTIImpl::getShuffleCost(TTI::ShuffleKind Kind, VectorType *DstTy,
   assert(SrcTy->getScalarType() == DstTy->getScalarType() &&
          "Expected the same scalar types");
 
+  if (isXRepeatVector(SrcTy) || isXRepeatVector(DstTy))
+    return BaseT::getShuffleCost(Kind, DstTy, SrcTy, Mask, CostKind, Index,
+                                 SubTp);
+
   Kind = improveShuffleKindFromMask(Kind, Mask, SrcTy, Index, SubTp);
   std::pair<InstructionCost, MVT> LT = getTypeLegalizationCost(SrcTy);
 
@@ -988,6 +992,10 @@ InstructionCost RISCVTTIImpl::getScalarizationOverhead(
     ArrayRef<Value *> VL) const {
   if (isa<ScalableVectorType>(Ty))
     return InstructionCost::getInvalid();
+
+  if (isXRepeatVector(Ty))
+    return BaseT::getScalarizationOverhead(Ty, DemandedElts, Insert, Extract,
+                                           CostKind, ForPoisonSrc, VL);
 
   // TODO: Add proper cost model for P extension fixed vectors (e.g., v4i16)
   // For now, skip all fixed vector cost analysis when P extension is available
@@ -1719,6 +1727,9 @@ InstructionCost RISCVTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst,
     return 1; // Treat as single instruction cost for now
   }
 
+  if (isXRepeatVector(Dst) || isXRepeatVector(Src))
+    return BaseT::getCastInstrCost(Opcode, Dst, Src, CCH, CostKind, I);
+
   // FIXME: Need to compute legalizing cost for illegal types.  The current
   // code handles only legal types and those which can be trivially
   // promoted to legal.
@@ -2423,6 +2434,9 @@ InstructionCost RISCVTTIImpl::getVectorInstrCost(unsigned Opcode, Type *Val,
   if (ST->enablePExtSIMDCodeGen() && isa<FixedVectorType>(Val)) {
     return 1; // Treat as single instruction cost for now
   }
+
+  if (isXRepeatVector(Val))
+    return BaseT::getVectorInstrCost(Opcode, Val, CostKind, Index, Op0, Op1);
 
   if (Opcode != Instruction::ExtractElement &&
       Opcode != Instruction::InsertElement)

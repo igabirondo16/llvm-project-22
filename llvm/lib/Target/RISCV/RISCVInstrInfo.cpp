@@ -559,6 +559,17 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
+  if (RISCV::XRVecRegClass.contains(DstReg, SrcReg)) {
+    static constexpr unsigned SubRegs[] = {
+        RISCV::sub_xr0, RISCV::sub_xr1, RISCV::sub_xr2, RISCV::sub_xr3,
+        RISCV::sub_xr4, RISCV::sub_xr5, RISCV::sub_xr6, RISCV::sub_xr7};
+    for (unsigned SubReg : SubRegs)
+      BuildMI(MBB, MBBI, DL, get(RISCV::ADDI), TRI->getSubReg(DstReg, SubReg))
+          .addReg(TRI->getSubReg(SrcReg, SubReg), KillFlag)
+          .addImm(0);
+    return;
+  }
+
   // Handle copy from csr
   if (RISCV::VCSRRegClass.contains(SrcReg) &&
       RISCV::GPRRegClass.contains(DstReg)) {
@@ -669,6 +680,8 @@ void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     } else {
       Opcode = RISCV::PseudoRV32ZdinxSD;
     }
+  } else if (RISCV::XRVecRegClass.hasSubClassEq(RC)) {
+    Opcode = RISCV::PseudoXRStore8;
   } else if (RISCV::FPR16RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::FSH;
   } else if (RISCV::FPR32RegClass.hasSubClassEq(RC)) {
@@ -761,6 +774,8 @@ void RISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
     } else {
       Opcode = RISCV::PseudoRV32ZdinxLD;
     }
+  } else if (RISCV::XRVecRegClass.hasSubClassEq(RC)) {
+    Opcode = RISCV::PseudoXRLoad8;
   } else if (RISCV::FPR16RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::FLH;
   } else if (RISCV::FPR32RegClass.hasSubClassEq(RC)) {

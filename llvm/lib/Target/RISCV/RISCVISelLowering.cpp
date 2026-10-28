@@ -300,6 +300,10 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
     }
   }
 
+  // XRepeat: <8 x i32> lives in 8 consecutive GPRs (x8/x16/x24 + 0..7).
+  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions())
+    addRegisterClass(MVT::v8i32, &RISCV::XRVecRegClass);
+
   // Compute derived properties from the register classes.
   computeRegisterProperties(STI.getRegisterInfo());
 
@@ -797,6 +801,28 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
   }
 
   setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
+
+  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions()) {
+    // XRepeat: <8 x i32> loads, stores and copies are native. Every other
+    // operation is expanded, which scalarizes it.
+    for (unsigned Op = 0; Op < ISD::BUILTIN_OP_END; ++Op) {
+      switch (Op) {
+      case ISD::LOAD:
+      case ISD::STORE:
+      case ISD::UNDEF:
+      case ISD::FREEZE:
+        break;
+      default:
+        setOperationAction(Op, MVT::v8i32, Expand);
+      }
+    }
+    // No extending loads into, or truncating stores from, <8 x i32>.
+    for (MVT VT : MVT::fixedlen_vector_valuetypes()) {
+      setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, MVT::v8i32,
+                       VT, Expand);
+      setTruncStoreAction(MVT::v8i32, VT, Expand);
+    }
+  }
 
   setBooleanContents(ZeroOrOneBooleanContent);
 
@@ -6721,6 +6747,10 @@ static SDValue lowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG,
 bool RISCVTargetLowering::isShuffleMaskLegal(ArrayRef<int> M, EVT VT) const {
   // Only support legal VTs for other shuffles for now.
   if (!isTypeLegal(VT))
+    return false;
+
+  // XRepeat has no shuffles; they are expanded element by element.
+  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions())
     return false;
 
   // Support splats for any type. These should type legalize well.
@@ -20906,6 +20936,12 @@ SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
       DCI.AddToWorklist(N);
     return true;
   };
+
+  // The RISC-V combines below assume scalar or RVV types; XRepeat's v8i32 is
+  // neither.
+  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions() &&
+      N->getNumValues() > 0 && N->getValueType(0) == MVT::v8i32)
+    return SDValue();
 
   switch (N->getOpcode()) {
   default:

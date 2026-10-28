@@ -35,6 +35,14 @@ class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
   const RISCVTargetLowering *TLI;
 
   const RISCVSubtarget *getST() const { return ST; }
+
+  /// True for fixed vectors when XRepeat keeps them in GPR blocks instead of
+  /// RVV registers. The RVV cost model doesn't apply to them, so the hooks
+  /// that would otherwise assume RVV use the generic cost model instead.
+  bool isXRepeatVector(Type *Ty) const {
+    return ST->hasVendorXRepeat() && !ST->hasVInstructions() &&
+           isa<FixedVectorType>(Ty);
+  }
   const RISCVTargetLowering *getTLI() const { return TLI; }
 
   /// This function returns an estimate for VL to be used in VL based terms

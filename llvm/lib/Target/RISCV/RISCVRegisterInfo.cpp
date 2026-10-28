@@ -555,6 +555,11 @@ bool RISCVRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
       // instruction will add 4 to the immediate. If that would overflow 12
       // bits, we can't fold the offset.
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(0);
+    } else if ((Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRStore8) &&
+               !isInt<12>(Lo12 + 28)) {
+      // Expanded into 8 LW/SW at offsets +0..+28; if the last one would not
+      // fit in 12 bits, don't fold the offset.
+      MI.getOperand(FIOperandNum + 1).ChangeToImmediate(0);
     } else {
       // We can encode an add with 12 bit signed immediate in the immediate
       // operand of our user instruction.  As a result, the remaining

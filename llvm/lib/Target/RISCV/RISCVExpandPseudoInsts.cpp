@@ -58,6 +58,8 @@ private:
                             MachineBasicBlock::iterator MBBI);
   bool expandRV32ZdinxLoad(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MBBI);
+  bool expandXRLoadStore8(MachineBasicBlock &MBB,
+                          MachineBasicBlock::iterator MBBI);
   bool expandPseudoReadVLENBViaVSETVLIX0(MachineBasicBlock &MBB,
                                          MachineBasicBlock::iterator MBBI);
 #ifndef NDEBUG
@@ -120,6 +122,9 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
     return expandRV32ZdinxStore(MBB, MBBI);
   case RISCV::PseudoRV32ZdinxLD:
     return expandRV32ZdinxLoad(MBB, MBBI);
+  case RISCV::PseudoXRLoad8:
+  case RISCV::PseudoXRStore8:
+    return expandXRLoadStore8(MBB, MBBI);
   case RISCV::PseudoCCMOVGPRNoX0:
   case RISCV::PseudoCCMOVGPR:
   case RISCV::PseudoCCADD:
@@ -559,6 +564,45 @@ bool RISCVExpandPseudo::expandRV32ZdinxLoad(MachineBasicBlock &MBB,
   }
   MIBLo.setMemRefs(NewLoMMOs);
   MIBHi.setMemRefs(NewHiMMOs);
+
+  MBBI->eraseFromParent();
+  return true;
+}
+
+// Expands PseudoXRLoad8/PseudoXRStore8 into eight LW/SW of the consecutive
+// GPRs of an XRepeat vector register.
+bool RISCVExpandPseudo::expandXRLoadStore8(MachineBasicBlock &MBB,
+                                           MachineBasicBlock::iterator MBBI) {
+  static constexpr unsigned SubRegs[] = {
+      RISCV::sub_xr0, RISCV::sub_xr1, RISCV::sub_xr2, RISCV::sub_xr3,
+      RISCV::sub_xr4, RISCV::sub_xr5, RISCV::sub_xr6, RISCV::sub_xr7};
+
+  DebugLoc DL = MBBI->getDebugLoc();
+  const TargetRegisterInfo *TRI = STI->getRegisterInfo();
+  MachineFunction *MF = MBB.getParent();
+  bool IsLoad = MBBI->getOpcode() == RISCV::PseudoXRLoad8;
+  Register VReg = MBBI->getOperand(0).getReg();
+  Register Base = MBBI->getOperand(1).getReg();
+  int64_t Offset = MBBI->getOperand(2).getImm();
+
+  for (unsigned I = 0; I < 8; ++I) {
+    Register Reg = TRI->getSubReg(VReg, SubRegs[I]);
+    int64_t Imm = Offset + 4 * I;
+    assert(isInt<12>(Imm) && "XRepeat load/store offset out of range");
+
+    MachineInstrBuilder MIB;
+    if (IsLoad)
+      MIB = BuildMI(MBB, MBBI, DL, TII->get(RISCV::LW), Reg);
+    else
+      MIB = BuildMI(MBB, MBBI, DL, TII->get(RISCV::SW))
+                .addReg(Reg, getKillRegState(MBBI->getOperand(0).isKill()));
+    MIB.addReg(Base).addImm(Imm);
+
+    SmallVector<MachineMemOperand *> MMOs;
+    for (const MachineMemOperand *MMO : MBBI->memoperands())
+      MMOs.push_back(MF->getMachineMemOperand(MMO, 4 * I, 4));
+    MIB.setMemRefs(MMOs);
+  }
 
   MBBI->eraseFromParent();
   return true;

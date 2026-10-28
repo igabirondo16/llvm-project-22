@@ -79,6 +79,15 @@ def sub_gpr_odd  : SubRegIndex<32, 32> {
   let SubRegRanges = SubRegRangeByHwMode<[RV32, RV64],
                                          [SubRegRange<32, 32>, SubRegRange<64, 64>]>;
 }
+
+// XRepeat: the 8 GPRs of a repeat_rv vector register (sub_xr0 is the first).
+foreach I = 0-7 in {
+  def sub_xr # I : SubRegIndex<32, !mul(32, I)> {
+    let SubRegRanges = SubRegRangeByHwMode<[RV32, RV64],
+                                           [SubRegRange<32, !mul(32, I)>,
+                                            SubRegRange<64, !mul(64, I)>]>;
+  }
+}
 } // Namespace = "RISCV"
 
 //===----------------------------------------------------------------------===//
@@ -384,6 +393,35 @@ def GPRPairC : RISCVRegisterClass<[XLenPairVT, XLenPairFVT], 64, (add
   X10_X11, X12_X13, X14_X15, X8_X9
 )>;
 } // let RegInfos = XLenPairRI, CopyCost = 2
+
+//===----------------------------------------------------------------------===//
+// XRepeat vector registers: 8 consecutive GPRs starting at x8, x16 or x24
+//===----------------------------------------------------------------------===//
+
+let RegAltNameIndices = [ABIRegAltName] in {
+  foreach Base = [8, 16, 24] in {
+    defvar Reg = !cast<Register>("X" # Base);
+    def "X" # Base # "_X" # !add(Base, 7)
+        : RISCVRegWithSubRegs<Base, Reg.AsmName,
+                              !foreach(I, !range(8),
+                                       !cast<Register>("X" # !add(Base, I))),
+                              Reg.AltNames> {
+      let SubRegIndices = !foreach(I, !range(8),
+                                   !cast<SubRegIndex>("sub_xr" # I));
+      let CoveredBySubRegs = 1;
+    }
+  }
+}
+
+def XRVecRI : RegInfoByHwMode<[RV32, RV64],
+                              [RegInfo<256, 256, 32>, RegInfo<512, 512, 64>]>;
+
+// Allocation order: x24..x31 and x16..x23 first, x8..x15 (which holds the
+// argument registers a0-a5 and the frame pointer) last. No pressure sets of its
+// own: its registers are GPRs, already tracked by the GPR pressure sets, and
+// new sets would change scheduling even when XRepeat is disabled.
+let RegInfos = XRVecRI, CopyCost = 8, GeneratePressureSet = 0 in
+def XRVec : RISCVRegisterClass<[v8i32], 32, (add X24_X31, X16_X23, X8_X15)>;
 
 //===----------------------------------------------------------------------===//
 // Floating Point registers
