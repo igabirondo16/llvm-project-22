@@ -1485,6 +1485,15 @@ def HasVendorXwchc
       AssemblerPredicate<(all_of FeatureVendorXwchc),
                          "'Xwchc' (WCH/QingKe additional compressed opcodes)">;
 
+// repeat_rv (custom core) Extension(s)
+
+def FeatureVendorXRepeat
+    : RISCVExtension<1, 0, "repeat_rv Repeat and Multiply-Accumulate">;
+def HasVendorXRepeat
+    : Predicate<"Subtarget->hasVendorXRepeat()">,
+      AssemblerPredicate<(all_of FeatureVendorXRepeat),
+                         "'XRepeat' (repeat_rv Repeat and Multiply-Accumulate)">;
+
 // Qualcomm Extensions
 
 def FeatureVendorXqccmp

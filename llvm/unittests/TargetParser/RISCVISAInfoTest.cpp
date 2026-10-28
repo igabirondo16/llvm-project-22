@@ -1351,6 +1351,7 @@ R"(All available -march extensions for RISC-V
     xqcisim              0.2
     xqcisls              0.2
     xqcisync             0.3
+    xrepeat              1.0
     xsfcease             1.0
     xsfmm128t            0.6
     xsfmm16t             0.6

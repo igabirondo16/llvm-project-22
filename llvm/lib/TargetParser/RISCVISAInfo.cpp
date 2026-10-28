@@ -802,6 +802,9 @@ Error RISCVISAInfo::checkDependency() {
   if (XLen != 32 && Exts.count("zilsd") != 0)
     return getError("'zilsd' is only supported for 'rv32'");
 
+  if (XLen != 32 && Exts.count("xrepeat") != 0)
+    return getError("'xrepeat' is only supported for 'rv32'");
+
   for (auto Ext : XqciExts)
     if (Exts.count(Ext.str()) && (XLen != 32))
       return getError("'" + Twine(Ext) + "'" + " is only supported for 'rv32'");
