@@ -694,6 +694,7 @@ static constexpr DecoderListEntry DecoderList32[]{
     {DecoderTableXVentana32,
      {RISCV::FeatureVendorXVentanaCondOps},
      "XVentanaCondOps"},
+    {DecoderTableXRepeat32, {RISCV::FeatureVendorXRepeat}, "XRepeat"},
     {DecoderTableXTHead32, XTHeadGroup, "T-Head extensions"},
     {DecoderTableXSfvector32, XSfVectorGroup, "SiFive vector extensions"},
     {DecoderTableXSfsystem32, XSfSystemGroup, "SiFive system extensions"},
