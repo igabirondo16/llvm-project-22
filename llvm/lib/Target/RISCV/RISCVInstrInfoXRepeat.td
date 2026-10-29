@@ -60,6 +60,11 @@ def XR_REPEAT : XRInstRepeat, Sched<[]>;
 def SDT_XRSplat : SDTypeProfile<1, 1, [SDTCisVT<0, v8i32>, SDTCisVT<1, i32>]>;
 def riscv_xr_splat : RVSDNode<"XR_SPLAT", SDT_XRSplat>;
 
+// acc + a[0] * b[0] + ... + a[7] * b[7].
+def SDT_XRDot : SDTypeProfile<1, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
+                                     SDTCisVT<2, v8i32>, SDTCisVT<3, v8i32>]>;
+def riscv_xr_dot : RVSDNode<"XR_DOT", SDT_XRDot>;
+
 let Predicates = [HasVendorXRepeat, IsRV32] in {
 
 // Load/store of a whole XRVec register as eight LW/SW. Used for spills and
@@ -106,6 +111,20 @@ foreach C = [0, 1] in {
       : Pseudo<(outs XRVec:$vd),
                (ins !if(A, XRVec, GPR):$rs1, !if(B, XRVec, GPR):$rs2,
                     !if(C, XRVec, GPR):$rs3, GPR:$count), []>;
+}
+
+// Dot product: rd = rs1 * rs2 + rs3 where rd and rs3 are the same scalar
+// accumulator, so neither walks and each step adds one product to it (REPEAT
+// mask 0110 when both sources are vectors). Expanded like PseudoXRMAC_*.
+foreach A = [0, 1] in
+foreach B = [0, 1] in {
+  defvar Name = !if(A, "V", "S") # !if(B, "V", "S");
+  let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Size = 8,
+      Constraints = "$vd = $rs3" in
+  def PseudoXRDot_ # Name
+      : Pseudo<(outs GPR:$vd),
+               (ins !if(A, XRVec, GPR):$rs1, !if(B, XRVec, GPR):$rs2,
+                    GPR:$rs3, GPR:$count), []>;
 }
 
 defvar XRStride4 = (ADDI (XLenVT X0), 4);
@@ -159,6 +178,34 @@ foreach C = [0, 1] in {
               (!cast<Instruction>("PseudoXRMAC_" # NameSBC)
                    XRMinusOne, OutB, OutC, XRCount7)>;
   }
+}
+
+// Dot products, for every vector/scalar combination of the sources. The
+// reduction's start value (0) is replaced by the scalar it is added to.
+foreach A = [0, 1] in
+foreach B = [0, 1] in {
+  defvar InA = !if(A, (v8i32 XRVec:$a), (riscv_xr_splat (XLenVT GPR:$a)));
+  defvar InB = !if(B, (v8i32 XRVec:$b), (riscv_xr_splat (XLenVT GPR:$b)));
+  defvar OutA = !if(A, (v8i32 XRVec:$a), (XLenVT GPR:$a));
+  defvar OutB = !if(B, (v8i32 XRVec:$b), (XLenVT GPR:$b));
+  defvar Dot = !cast<Instruction>("PseudoXRDot_" # !if(A, "V", "S") #
+                                  !if(B, "V", "S"));
+
+  def : Pat<(add (riscv_xr_dot (XLenVT 0), InA, InB), (XLenVT GPR:$acc)),
+            (Dot OutA, OutB, GPR:$acc, XRCount7)>;
+  def : Pat<(riscv_xr_dot (XLenVT GPR:$acc), InA, InB),
+            (Dot OutA, OutB, GPR:$acc, XRCount7)>;
+}
+
+// An element at a constant index is one register of the block. (insertelt's
+// element-type constraint can't be checked against GPR's per-HwMode type, so
+// the unconstrained vector_insert is used.)
+foreach I = 0...7 in {
+  defvar SubReg = !cast<SubRegIndex>("sub_xr" # I);
+  def : Pat<(i32 (extractelt (v8i32 XRVec:$v), I)),
+            (EXTRACT_SUBREG XRVec:$v, SubReg)>;
+  def : Pat<(v8i32 (vector_insert (v8i32 XRVec:$v), (i32 GPR:$x), I)),
+            (INSERT_SUBREG XRVec:$v, GPR:$x, SubReg)>;
 }
 
 } // Predicates = [HasVendorXRepeat, IsRV32]

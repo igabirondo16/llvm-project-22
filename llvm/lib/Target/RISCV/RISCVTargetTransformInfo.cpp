@@ -367,6 +367,26 @@ bool RISCVTTIImpl::shouldExpandReduction(const IntrinsicInst *II) const {
   }
 }
 
+bool RISCVTTIImpl::preferInLoopReduction(RecurKind Kind, Type *Ty) const {
+  // XRepeat: an i32 add reduction done in the loop, acc += reduce.add(a * b),
+  // is a single MAC that accumulates into the scalar (REPEAT mask 0110),
+  // and keeps a vector register free.
+  return hasXRepeatVectors() && Kind == RecurKind::Add && Ty->isIntegerTy(32);
+}
+
+std::optional<InstructionCost>
+RISCVTTIImpl::getXRepeatPairCost(Type *Ty) const {
+  // Shorter vectors are widened to a whole block, which takes as many
+  // registers as eight elements and only pays off for some of them.
+  if (!isXRepeatVector(Ty) ||
+      cast<FixedVectorType>(Ty)->getNumElements() % 8 != 0)
+    return std::nullopt;
+  std::pair<InstructionCost, MVT> LT = getTypeLegalizationCost(Ty);
+  if (LT.second != MVT::v8i32)
+    return std::nullopt;
+  return LT.first * 2;
+}
+
 std::optional<unsigned> RISCVTTIImpl::getMaxVScale() const {
   if (ST->hasVInstructions())
     return ST->getRealMaxVLen() / RISCV::RVVBitsPerBlock;
@@ -389,8 +409,10 @@ RISCVTTIImpl::getRegisterBitWidth(TargetTransformInfo::RegisterKind K) const {
   case TargetTransformInfo::RGK_Scalar:
     return TypeSize::getFixed(ST->getXLen());
   case TargetTransformInfo::RGK_FixedWidthVector:
-    return TypeSize::getFixed(
-        ST->useRVVForFixedLengthVectors() ? LMUL * ST->getRealMinVLen() : 0);
+    if (ST->useRVVForFixedLengthVectors())
+      return TypeSize::getFixed(LMUL * ST->getRealMinVLen());
+    // XRepeat: a block of 8 x i32.
+    return TypeSize::getFixed(hasXRepeatVectors() ? 256 : 0);
   case TargetTransformInfo::RGK_ScalableVector:
     return TypeSize::getScalable(
         (ST->hasVInstructions() &&
@@ -675,9 +697,16 @@ RISCVTTIImpl::getShuffleCost(TTI::ShuffleKind Kind, VectorType *DstTy,
   assert(SrcTy->getScalarType() == DstTy->getScalarType() &&
          "Expected the same scalar types");
 
-  if (isXRepeatVector(SrcTy) || isXRepeatVector(DstTy))
+  if (isXRepeatVector(SrcTy) || isXRepeatVector(DstTy)) {
+    // A splat is a MAC of the scalar by 1; other shuffles are scalarized.
+    if (Kind == TTI::SK_Broadcast)
+      if (std::optional<InstructionCost> Cost = getXRepeatPairCost(DstTy))
+        return *Cost;
+    if (CostKind == TTI::TCK_RecipThroughput)
+      return InstructionCost::getInvalid();
     return BaseT::getShuffleCost(Kind, DstTy, SrcTy, Mask, CostKind, Index,
                                  SubTp);
+  }
 
   Kind = improveShuffleKindFromMask(Kind, Mask, SrcTy, Index, SubTp);
   std::pair<InstructionCost, MVT> LT = getTypeLegalizationCost(SrcTy);
@@ -1040,6 +1069,8 @@ RISCVTTIImpl::getMemIntrinsicInstrCost(const MemIntrinsicCostAttributes &MICA,
                                        TTI::TargetCostKind CostKind) const {
   Type *DataTy = MICA.getDataType();
   Align Alignment = MICA.getAlignment();
+  if (isUnsupportedXRepeatOp(DataTy, CostKind))
+    return InstructionCost::getInvalid();
   switch (MICA.getID()) {
   case Intrinsic::vp_load_ff: {
     EVT DataTypeVT = TLI->getValueType(DL, DataTy);
@@ -1090,6 +1121,8 @@ InstructionCost RISCVTTIImpl::getInterleavedMemoryOpCost(
     unsigned Opcode, Type *VecTy, unsigned Factor, ArrayRef<unsigned> Indices,
     Align Alignment, unsigned AddressSpace, TTI::TargetCostKind CostKind,
     bool UseMaskForCond, bool UseMaskForGaps) const {
+  if (isUnsupportedXRepeatOp(VecTy, CostKind))
+    return InstructionCost::getInvalid();
 
   // The interleaved memory access pass will lower (de)interleave ops combined
   // with an adjacent appropriate memory to vlseg/vsseg intrinsics. vlseg/vsseg
@@ -1370,6 +1403,14 @@ InstructionCost
 RISCVTTIImpl::getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
                                     TTI::TargetCostKind CostKind) const {
   auto *RetTy = ICA.getReturnType();
+  // XRepeat: of the vector intrinsics, only reduce.add is supported.
+  if (ICA.getID() != Intrinsic::vector_reduce_add &&
+      (isUnsupportedXRepeatOp(RetTy, CostKind) ||
+       any_of(ICA.getArgTypes(), [&](Type *Ty) {
+         return isUnsupportedXRepeatOp(Ty, CostKind);
+       })))
+    return InstructionCost::getInvalid();
+
   switch (ICA.getID()) {
   case Intrinsic::lrint:
   case Intrinsic::llrint:
@@ -1727,8 +1768,11 @@ InstructionCost RISCVTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst,
     return 1; // Treat as single instruction cost for now
   }
 
-  if (isXRepeatVector(Dst) || isXRepeatVector(Src))
+  if (isXRepeatVector(Dst) || isXRepeatVector(Src)) {
+    if (CostKind == TTI::TCK_RecipThroughput)
+      return InstructionCost::getInvalid();
     return BaseT::getCastInstrCost(Opcode, Dst, Src, CCH, CostKind, I);
+  }
 
   // FIXME: Need to compute legalizing cost for illegal types.  The current
   // code handles only legal types and those which can be trivially
@@ -1932,6 +1976,8 @@ InstructionCost
 RISCVTTIImpl::getMinMaxReductionCost(Intrinsic::ID IID, VectorType *Ty,
                                      FastMathFlags FMF,
                                      TTI::TargetCostKind CostKind) const {
+  if (isUnsupportedXRepeatOp(Ty, CostKind))
+    return InstructionCost::getInvalid();
   if (isa<FixedVectorType>(Ty) && !ST->useRVVForFixedLengthVectors())
     return BaseT::getMinMaxReductionCost(IID, Ty, FMF, CostKind);
 
@@ -2038,6 +2084,13 @@ InstructionCost
 RISCVTTIImpl::getArithmeticReductionCost(unsigned Opcode, VectorType *Ty,
                                          std::optional<FastMathFlags> FMF,
                                          TTI::TargetCostKind CostKind) const {
+  // XRepeat: an add reduction is a MAC by 1 that accumulates into a scalar.
+  if (Opcode == Instruction::Add)
+    if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Ty))
+      return *Cost;
+  if (isUnsupportedXRepeatOp(Ty, CostKind))
+    return InstructionCost::getInvalid();
+
   if (isa<FixedVectorType>(Ty) && !ST->useRVVForFixedLengthVectors())
     return BaseT::getArithmeticReductionCost(Opcode, Ty, FMF, CostKind);
 
@@ -2153,9 +2206,26 @@ RISCVTTIImpl::getArithmeticReductionCost(unsigned Opcode, VectorType *Ty,
   return SplitCost + getRISCVInstructionCost(Opcodes, LT.second, CostKind);
 }
 
+InstructionCost
+RISCVTTIImpl::getMulAccReductionCost(bool IsUnsigned, unsigned RedOpcode,
+                                     Type *ResTy, VectorType *Ty,
+                                     TTI::TargetCostKind CostKind) const {
+  // XRepeat: reduce.add(mul(a, b)) without extensions is a single MAC that
+  // accumulates into a scalar.
+  if (RedOpcode == Instruction::Add && ResTy == Ty->getElementType())
+    if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Ty))
+      return *Cost;
+  if (isUnsupportedXRepeatOp(Ty, CostKind))
+    return InstructionCost::getInvalid();
+  return BaseT::getMulAccReductionCost(IsUnsigned, RedOpcode, ResTy, Ty,
+                                       CostKind);
+}
+
 InstructionCost RISCVTTIImpl::getExtendedReductionCost(
     unsigned Opcode, bool IsUnsigned, Type *ResTy, VectorType *ValTy,
     std::optional<FastMathFlags> FMF, TTI::TargetCostKind CostKind) const {
+  if (isUnsupportedXRepeatOp(ValTy, CostKind))
+    return InstructionCost::getInvalid();
   if (isa<FixedVectorType>(ValTy) && !ST->useRVVForFixedLengthVectors())
     return BaseT::getExtendedReductionCost(Opcode, IsUnsigned, ResTy, ValTy,
                                            FMF, CostKind);
@@ -2212,6 +2282,13 @@ InstructionCost RISCVTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
                                               TTI::TargetCostKind CostKind,
                                               TTI::OperandValueInfo OpInfo,
                                               const Instruction *I) const {
+  // XRepeat: a load is LW + REPEAT, but a store is one SW per element since
+  // REPEAT can't repeat stores.
+  if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Src))
+    return Opcode == Instruction::Store ? *Cost * 4 : *Cost;
+  if (isUnsupportedXRepeatOp(Src, CostKind))
+    return InstructionCost::getInvalid();
+
   EVT VT = TLI->getValueType(DL, Src, true);
   // Type legalization can't handle structs
   if (VT == MVT::Other)
@@ -2256,6 +2333,8 @@ InstructionCost RISCVTTIImpl::getCmpSelInstrCost(
     unsigned Opcode, Type *ValTy, Type *CondTy, CmpInst::Predicate VecPred,
     TTI::TargetCostKind CostKind, TTI::OperandValueInfo Op1Info,
     TTI::OperandValueInfo Op2Info, const Instruction *I) const {
+  if (isUnsupportedXRepeatOp(ValTy, CostKind))
+    return InstructionCost::getInvalid();
   if (CostKind != TTI::TCK_RecipThroughput)
     return BaseT::getCmpSelInstrCost(Opcode, ValTy, CondTy, VecPred, CostKind,
                                      Op1Info, Op2Info, I);
@@ -2605,6 +2684,22 @@ InstructionCost RISCVTTIImpl::getArithmeticInstrCost(
     TTI::OperandValueInfo Op1Info, TTI::OperandValueInfo Op2Info,
     ArrayRef<const Value *> Args, const Instruction *CxtI) const {
 
+  // XRepeat: add, sub, mul and shifts by a constant are a MAC + REPEAT.
+  if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Ty)) {
+    switch (Opcode) {
+    case Instruction::Add:
+    case Instruction::Sub:
+    case Instruction::Mul:
+      return *Cost;
+    case Instruction::Shl:
+      if (Op2Info.isConstant() && Op2Info.isUniform())
+        return *Cost;
+      break;
+    }
+  }
+  if (isUnsupportedXRepeatOp(Ty, CostKind))
+    return InstructionCost::getInvalid();
+
   // TODO: Handle more cost kinds.
   if (CostKind != TTI::TCK_RecipThroughput)
     return BaseT::getArithmeticInstrCost(Opcode, Ty, CostKind, Op1Info, Op2Info,
@@ -2783,6 +2878,22 @@ void RISCVTTIImpl::getUnrollingPreferences(
   // TODO: More tuning on benchmarks and metrics with changes as needed
   //       would apply to all settings below to enable performance.
 
+  // XRepeat: don't unroll auto-vectorized loops at all, not even fully. With
+  // only three vector registers, the loads of an unrolled body get scheduled
+  // or hoisted ahead of their MACs and the blocks spill.
+  if (hasXRepeatVectors() &&
+      getBooleanLoopAttribute(L, "llvm.loop.isvectorized") &&
+      any_of(L->blocks(), [](const BasicBlock *BB) {
+        return any_of(*BB, [](const Instruction &I) {
+          return I.getType()->isVectorTy() ||
+                 any_of(I.operand_values(), [](const Value *V) {
+                   return V->getType()->isVectorTy();
+                 });
+        });
+      })) {
+    UP.FullUnrollMaxCount = 0;
+    return;
+  }
 
   if (ST->enableDefaultUnroll())
     return BasicTTIImplBase::getUnrollingPreferences(L, SE, UP, ORE);

@@ -36,13 +36,32 @@ class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
 
   const RISCVSubtarget *getST() const { return ST; }
 
+  /// True when XRepeat provides the fixed-length vectors: three <8 x i32>
+  /// blocks of GPRs (x8..x15, x16..x23, x24..x31) instead of RVV registers.
+  bool hasXRepeatVectors() const {
+    return ST->hasVendorXRepeat() && !ST->hasVInstructions();
+  }
+
   /// True for fixed vectors when XRepeat keeps them in GPR blocks instead of
   /// RVV registers. The RVV cost model doesn't apply to them, so the hooks
   /// that would otherwise assume RVV use the generic cost model instead.
   bool isXRepeatVector(Type *Ty) const {
-    return ST->hasVendorXRepeat() && !ST->hasVInstructions() &&
-           isa<FixedVectorType>(Ty);
+    return hasXRepeatVectors() && isa<FixedVectorType>(Ty);
   }
+
+  /// XRepeat only has MAC and LW + REPEAT. Any other vector operation is done
+  /// element by element, which is never worth vectorizing for since the
+  /// blocks already take 24 of the GPRs. Its throughput cost (the one the
+  /// vectorizers use) is therefore invalid, so they don't choose it; the
+  /// other cost kinds keep the generic estimate for existing vector code.
+  bool isUnsupportedXRepeatOp(Type *Ty, TTI::TargetCostKind CostKind) const {
+    return CostKind == TTI::TCK_RecipThroughput && isXRepeatVector(Ty);
+  }
+
+  /// Cost of an operation that XRepeat does with one instruction + REPEAT
+  /// pair per <8 x i32> block of \p Ty, or std::nullopt if \p Ty isn't
+  /// legalized to such blocks.
+  std::optional<InstructionCost> getXRepeatPairCost(Type *Ty) const;
   const RISCVTargetLowering *getTLI() const { return TLI; }
 
   /// This function returns an estimate for VL to be used in VL based terms
@@ -146,6 +165,8 @@ public:
 
   bool preferAlternateOpcodeVectorization() const override;
 
+  bool preferInLoopReduction(RecurKind Kind, Type *Ty) const override;
+
   bool preferEpilogueVectorization() const override {
     // Epilogue vectorization is usually unprofitable - tail folding or
     // a smaller VF would have been better.  This a blunt hammer - we
@@ -236,6 +257,11 @@ public:
   getExtendedReductionCost(unsigned Opcode, bool IsUnsigned, Type *ResTy,
                            VectorType *ValTy, std::optional<FastMathFlags> FMF,
                            TTI::TargetCostKind CostKind) const override;
+
+  InstructionCost
+  getMulAccReductionCost(bool IsUnsigned, unsigned RedOpcode, Type *ResTy,
+                         VectorType *Ty,
+                         TTI::TargetCostKind CostKind) const override;
 
   InstructionCost getMemoryOpCost(
       unsigned Opcode, Type *Src, Align Alignment, unsigned AddressSpace,
@@ -419,6 +445,9 @@ public:
     // Don't interleave if the loop has been vectorized with scalable vectors.
     if (VF.isScalable())
       return 1;
+    // XRepeat has only three vector registers.
+    if (hasXRepeatVectors())
+      return 1;
     // If the loop will not be vectorized, don't interleave the loop.
     // Let regular unroll to unroll the loop.
     return VF.isScalar() ? 1 : ST->getMaxInterleaveFactor();
@@ -448,7 +477,10 @@ public:
       // only register that can be used to hold a mask.
       // FIXME: Should we conservatively return 31 as the number of usable
       // vector registers?
-      return ST->hasVInstructions() ? 32 : 0;
+      if (ST->hasVInstructions())
+        return 32;
+      // XRepeat: the three 8-GPR blocks.
+      return hasXRepeatVectors() ? 3 : 0;
     }
     llvm_unreachable("unknown register class");
   }

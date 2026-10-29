@@ -137,6 +137,10 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case RISCV::PseudoXRMAC_VSV:
   case RISCV::PseudoXRMAC_VVS:
   case RISCV::PseudoXRMAC_VVV:
+  case RISCV::PseudoXRDot_SS:
+  case RISCV::PseudoXRDot_SV:
+  case RISCV::PseudoXRDot_VS:
+  case RISCV::PseudoXRDot_VV:
     return expandXRMAC(MBB, MBBI);
   case RISCV::PseudoCCMOVGPRNoX0:
   case RISCV::PseudoCCMOVGPR:
@@ -650,10 +654,11 @@ bool RISCVExpandPseudo::expandXRVLoad(MachineBasicBlock &MBB,
   return true;
 }
 
-// Expands PseudoXRMAC_* into an XR_MAC on the first element of each XRepeat
-// vector operand followed by a REPEAT. The mask walks rd and every source that
-// is an XRepeat vector register; scalar sources stay fixed. MAC repeats don't
-// use the stride, so it is x0.
+// Expands PseudoXRMAC_* and PseudoXRDot_* into an XR_MAC on the first element
+// of each XRepeat vector operand followed by a REPEAT. The mask walks every
+// operand that is an XRepeat vector register; scalar ones stay fixed (for
+// PseudoXRDot_*, rd = rs3 is a scalar accumulator). MAC repeats don't use the
+// stride, so it is x0.
 bool RISCVExpandPseudo::expandXRMAC(MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator MBBI) {
   DebugLoc DL = MBBI->getDebugLoc();
@@ -661,7 +666,7 @@ bool RISCVExpandPseudo::expandXRMAC(MachineBasicBlock &MBB,
   Register VReg = MBBI->getOperand(0).getReg();
   const MachineOperand &Count = MBBI->getOperand(4);
 
-  unsigned Mask = 0b0001;
+  unsigned Mask = RISCV::XRVecRegClass.contains(VReg) ? 0b0001 : 0b0000;
   Register First[3];
   for (unsigned I = 0; I < 3; ++I) {
     Register Reg = MBBI->getOperand(I + 1).getReg();
@@ -674,7 +679,8 @@ bool RISCVExpandPseudo::expandXRMAC(MachineBasicBlock &MBB,
   }
 
   BuildMI(MBB, MBBI, DL, TII->get(RISCV::XR_MAC),
-          TRI->getSubReg(VReg, RISCV::sub_xr0))
+          Mask & 0b0001 ? Register(TRI->getSubReg(VReg, RISCV::sub_xr0))
+                        : VReg)
       .addReg(First[0])
       .addReg(First[1])
       .addReg(First[2]);

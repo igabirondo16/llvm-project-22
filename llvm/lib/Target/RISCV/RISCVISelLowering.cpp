@@ -823,6 +823,11 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
     // Splats become XR_SPLAT (MAC reads the scalar directly) and shifts by a
     // constant become a multiply by a power of two.
     setOperationAction({ISD::BUILD_VECTOR, ISD::SHL}, MVT::v8i32, Custom);
+    // Add reductions become a MAC that accumulates into a scalar, and
+    // elements at a constant index are just one register of the block.
+    setOperationAction({ISD::VECREDUCE_ADD, ISD::EXTRACT_VECTOR_ELT,
+                        ISD::INSERT_VECTOR_ELT},
+                       MVT::v8i32, Custom);
     // No extending loads into, or truncating stores from, <8 x i32>.
     for (MVT VT : MVT::fixedlen_vector_valuetypes()) {
       setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, MVT::v8i32,
@@ -7786,18 +7791,49 @@ RISCVTargetLowering::lowerXAndesBfHCvtBFloat16Store(SDValue Op,
 }
 
 // Custom lowering of the v8i32 operations XRepeat marks Custom. Returning an
-// empty SDValue falls back to expansion (scalarization).
+// empty SDValue falls back to expansion (scalarization), and returning Op
+// leaves it to instruction selection.
 static SDValue lowerXRepeatOperation(SDValue Op, SelectionDAG &DAG) {
   SDLoc DL(Op);
   MVT VT = Op.getSimpleValueType();
   switch (Op.getOpcode()) {
   default:
     return SDValue();
+  case ISD::EXTRACT_VECTOR_ELT:
+  case ISD::INSERT_VECTOR_ELT:
+    // A constant index selects a sub-register of the block.
+    if (isa<ConstantSDNode>(Op.getOperand(Op.getNumOperands() - 1)))
+      return Op;
+    return SDValue();
+  case ISD::VECREDUCE_ADD: {
+    // reduce.add(a * b) = 0 + sum(a[i] * b[i]), and reduce.add(a) is the same
+    // with b = splat(1). Adding the start value is folded in by isel.
+    SDValue Vec = Op.getOperand(0);
+    SDValue A = Vec, B;
+    if (Vec.getOpcode() == ISD::MUL && Vec.hasOneUse()) {
+      A = Vec.getOperand(0);
+      B = Vec.getOperand(1);
+    } else {
+      B = DAG.getNode(RISCVISD::XR_SPLAT, DL, MVT::v8i32,
+                      DAG.getConstant(1, DL, MVT::i32));
+    }
+    return DAG.getNode(RISCVISD::XR_DOT, DL, VT,
+                       DAG.getConstant(0, DL, MVT::i32), A, B);
+  }
   case ISD::BUILD_VECTOR: {
     SDValue Splat = cast<BuildVectorSDNode>(Op)->getSplatValue();
-    if (!Splat || Splat.getValueType() != MVT::i32)
-      return SDValue();
-    return DAG.getNode(RISCVISD::XR_SPLAT, DL, VT, Splat);
+    if (Splat && Splat.getValueType() == MVT::i32)
+      return DAG.getNode(RISCVISD::XR_SPLAT, DL, VT, Splat);
+    // Otherwise write the elements into the block one register at a time.
+    // The default expansion goes through the stack, and the DAG combiner
+    // merges its eight scalar stores back into a store of this same
+    // BUILD_VECTOR, which never terminates.
+    SDValue Vec = DAG.getUNDEF(VT);
+    for (auto [I, Elt] : enumerate(Op->op_values()))
+      if (!Elt.isUndef())
+        Vec = DAG.getNode(ISD::INSERT_VECTOR_ELT, DL, VT, Vec, Elt,
+                          DAG.getVectorIdxConstant(I, DL));
+    return Vec;
   }
   case ISD::SHL: {
     // a << k == a * (1 << k).
@@ -7817,8 +7853,11 @@ static SDValue lowerXRepeatOperation(SDValue Op, SelectionDAG &DAG) {
 
 SDValue RISCVTargetLowering::LowerOperation(SDValue Op,
                                             SelectionDAG &DAG) const {
-  if (Op.getValueType() == MVT::v8i32 && Subtarget.hasVendorXRepeat() &&
-      !Subtarget.hasVInstructions())
+  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions() &&
+      (Op.getValueType() == MVT::v8i32 ||
+       ((Op.getOpcode() == ISD::VECREDUCE_ADD ||
+         Op.getOpcode() == ISD::EXTRACT_VECTOR_ELT) &&
+        Op.getOperand(0).getValueType() == MVT::v8i32)))
     return lowerXRepeatOperation(Op, DAG);
 
   switch (Op.getOpcode()) {

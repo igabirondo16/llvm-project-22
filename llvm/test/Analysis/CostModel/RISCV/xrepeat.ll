@@ -3,21 +3,23 @@
 ; RUN:   -disable-output < %s 2>&1 | FileCheck %s
 
 ; With XRepeat (and no V), <8 x i32> is legal but lives in GPRs: the RVV cost
-; model must not be used for it.
+; model must not be used for it. What one LW or MAC + REPEAT pair does costs 2
+; per block; every other vector operation has an invalid throughput cost, so
+; the vectorizers never choose it.
 
 define void @ops(<8 x i32> %a, <8 x i32> %b, i32 %s, i32 %i, <8 x i16> %h) {
 ; CHECK-LABEL: 'ops'
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %add = add <8 x i32> %a, %b
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %mul = mul <8 x i32> %a, %b
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 32 for instruction: %xor = xor <8 x i32> %a, %b
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %add = add <8 x i32> %a, %b
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %mul = mul <8 x i32> %a, %b
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %xor = xor <8 x i32> %a, %b
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %ext = extractelement <8 x i32> %a, i32 3
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %extv = extractelement <8 x i32> %a, i32 %i
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 1 for instruction: %ins = insertelement <8 x i32> %a, i32 %s, i32 0
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 9 for instruction: %splat = shufflevector <8 x i32> %ins, <8 x i32> poison, <8 x i32> zeroinitializer
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 16 for instruction: %rev = shufflevector <8 x i32> %a, <8 x i32> poison, <8 x i32> <i32 7, i32 6, i32 5, i32 4, i32 3, i32 2, i32 1, i32 0>
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %sx = sext <8 x i16> %h to <8 x i32>
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 0 for instruction: %tr = trunc <8 x i32> %a to <8 x i16>
-; CHECK-NEXT:  Cost Model: Found an estimated cost of 52 for instruction: %red = call i32 @llvm.vector.reduce.add.v8i32(<8 x i32> %a)
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %splat = shufflevector <8 x i32> %ins, <8 x i32> poison, <8 x i32> zeroinitializer
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %rev = shufflevector <8 x i32> %a, <8 x i32> poison, <8 x i32> <i32 7, i32 6, i32 5, i32 4, i32 3, i32 2, i32 1, i32 0>
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %sx = sext <8 x i16> %h to <8 x i32>
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %tr = trunc <8 x i32> %a to <8 x i16>
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %red = call i32 @llvm.vector.reduce.add.v8i32(<8 x i32> %a)
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 0 for instruction: ret void
 ;
   %add = add <8 x i32> %a, %b
@@ -31,5 +33,25 @@ define void @ops(<8 x i32> %a, <8 x i32> %b, i32 %s, i32 %i, <8 x i16> %h) {
   %sx = sext <8 x i16> %h to <8 x i32>
   %tr = trunc <8 x i32> %a to <8 x i16>
   %red = call i32 @llvm.vector.reduce.add.v8i32(<8 x i32> %a)
+  ret void
+}
+
+; Only multiples of 8 elements: a shorter vector is widened to a whole block.
+define void @widths(<4 x i32> %a4, <16 x i32> %a16, ptr %p) {
+; CHECK-LABEL: 'widths'
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %add4 = add <4 x i32> %a4, %a4
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 4 for instruction: %add16 = add <16 x i32> %a16, %a16
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %ld4 = load <4 x i32>, ptr %p, align 4
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 4 for instruction: %ld16 = load <16 x i32>, ptr %p, align 4
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %red4 = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %a4)
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 4 for instruction: %red16 = call i32 @llvm.vector.reduce.add.v16i32(<16 x i32> %a16)
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 0 for instruction: ret void
+;
+  %add4 = add <4 x i32> %a4, %a4
+  %add16 = add <16 x i32> %a16, %a16
+  %ld4 = load <4 x i32>, ptr %p, align 4
+  %ld16 = load <16 x i32>, ptr %p, align 4
+  %red4 = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %a4)
+  %red16 = call i32 @llvm.vector.reduce.add.v16i32(<16 x i32> %a16)
   ret void
 }
