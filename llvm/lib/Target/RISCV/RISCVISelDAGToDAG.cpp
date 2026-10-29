@@ -2752,6 +2752,9 @@ void RISCVDAGToDAGISel::Select(SDNode *Node) {
     break;
   case ISD::INSERT_SUBVECTOR:
   case RISCVISD::TUPLE_INSERT: {
+    // XRepeat's fixed vectors are GPR blocks, selected by TableGen patterns.
+    if (VT.isFixedLengthVector() && !Subtarget->hasVInstructions())
+      break;
     SDValue V = Node->getOperand(0);
     SDValue SubV = Node->getOperand(1);
     SDLoc DL(SubV);
@@ -2819,6 +2822,9 @@ void RISCVDAGToDAGISel::Select(SDNode *Node) {
   }
   case ISD::EXTRACT_SUBVECTOR:
   case RISCVISD::TUPLE_EXTRACT: {
+    // XRepeat's fixed vectors are GPR blocks, selected by TableGen patterns.
+    if (VT.isFixedLengthVector() && !Subtarget->hasVInstructions())
+      break;
     SDValue V = Node->getOperand(0);
     auto Idx = Node->getConstantOperandVal(1);
     MVT InVT = V.getSimpleValueType();

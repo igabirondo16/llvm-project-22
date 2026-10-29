@@ -377,12 +377,12 @@ bool RISCVTTIImpl::preferInLoopReduction(RecurKind Kind, Type *Ty) const {
 std::optional<InstructionCost>
 RISCVTTIImpl::getXRepeatPairCost(Type *Ty) const {
   // Shorter vectors are widened to a whole block, which takes as many
-  // registers as eight elements and only pays off for some of them.
+  // registers as four elements and only pays off for some of them.
   if (!isXRepeatVector(Ty) ||
-      cast<FixedVectorType>(Ty)->getNumElements() % 8 != 0)
+      cast<FixedVectorType>(Ty)->getNumElements() % 4 != 0)
     return std::nullopt;
   std::pair<InstructionCost, MVT> LT = getTypeLegalizationCost(Ty);
-  if (LT.second != MVT::v8i32)
+  if (LT.second != MVT::v8i32 && LT.second != MVT::v4i32)
     return std::nullopt;
   return LT.first * 2;
 }
@@ -411,7 +411,7 @@ RISCVTTIImpl::getRegisterBitWidth(TargetTransformInfo::RegisterKind K) const {
   case TargetTransformInfo::RGK_FixedWidthVector:
     if (ST->useRVVForFixedLengthVectors())
       return TypeSize::getFixed(LMUL * ST->getRealMinVLen());
-    // XRepeat: a block of 8 x i32.
+    // XRepeat: a block of 8 x i32 (the widest; 4 x i32 blocks are also legal).
     return TypeSize::getFixed(hasXRepeatVectors() ? 256 : 0);
   case TargetTransformInfo::RGK_ScalableVector:
     return TypeSize::getScalable(
@@ -3286,6 +3286,10 @@ unsigned RISCVTTIImpl::getRegUsageForType(Type *Ty) const {
 
     if (ST->useRVVForFixedLengthVectors())
       return divideCeil(Size, ST->getRealMinVLen());
+
+    // XRepeat: counted in 4-GPR blocks (see getNumberOfRegisters).
+    if (isXRepeatVector(Ty))
+      return divideCeil(Size.getFixedValue(), 128);
   }
 
   return BaseT::getRegUsageForType(Ty);

@@ -2,10 +2,10 @@
 ; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes="print<cost-model>" \
 ; RUN:   -disable-output < %s 2>&1 | FileCheck %s
 
-; With XRepeat (and no V), <8 x i32> is legal but lives in GPRs: the RVV cost
-; model must not be used for it. What one LW or MAC + REPEAT pair does costs 2
-; per block; every other vector operation has an invalid throughput cost, so
-; the vectorizers never choose it.
+; With XRepeat (and no V), <8 x i32> and <4 x i32> are legal but live in GPRs:
+; the RVV cost model must not be used for them. What one LW or MAC + REPEAT
+; pair does costs 2 per block; every other vector operation has an invalid
+; throughput cost, so the vectorizers never choose it.
 
 define void @ops(<8 x i32> %a, <8 x i32> %b, i32 %s, i32 %i, <8 x i16> %h) {
 ; CHECK-LABEL: 'ops'
@@ -36,19 +36,26 @@ define void @ops(<8 x i32> %a, <8 x i32> %b, i32 %s, i32 %i, <8 x i16> %h) {
   ret void
 }
 
-; Only multiples of 8 elements: a shorter vector is widened to a whole block.
-define void @widths(<4 x i32> %a4, <16 x i32> %a16, ptr %p) {
+; Multiples of 4 elements are blocks of 4 or 8. A shorter vector is widened to
+; a whole block, which only pays off for some of its elements.
+define void @widths(<2 x i32> %a2, <4 x i32> %a4, <12 x i32> %a12, <16 x i32> %a16, ptr %p) {
 ; CHECK-LABEL: 'widths'
-; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %add4 = add <4 x i32> %a4, %a4
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %add2 = add <2 x i32> %a2, %a2
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %add4 = add <4 x i32> %a4, %a4
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 4 for instruction: %add12 = add <12 x i32> %a12, %a12
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 4 for instruction: %add16 = add <16 x i32> %a16, %a16
-; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %ld4 = load <4 x i32>, ptr %p, align 4
+; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %ld2 = load <2 x i32>, ptr %p, align 4
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %ld4 = load <4 x i32>, ptr %p, align 4
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 4 for instruction: %ld16 = load <16 x i32>, ptr %p, align 4
-; CHECK-NEXT:  Cost Model: Invalid cost for instruction: %red4 = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %a4)
+; CHECK-NEXT:  Cost Model: Found an estimated cost of 2 for instruction: %red4 = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %a4)
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 4 for instruction: %red16 = call i32 @llvm.vector.reduce.add.v16i32(<16 x i32> %a16)
 ; CHECK-NEXT:  Cost Model: Found an estimated cost of 0 for instruction: ret void
 ;
+  %add2 = add <2 x i32> %a2, %a2
   %add4 = add <4 x i32> %a4, %a4
+  %add12 = add <12 x i32> %a12, %a12
   %add16 = add <16 x i32> %a16, %a16
+  %ld2 = load <2 x i32>, ptr %p, align 4
   %ld4 = load <4 x i32>, ptr %p, align 4
   %ld16 = load <16 x i32>, ptr %p, align 4
   %red4 = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %a4)

@@ -153,6 +153,11 @@ struct RISCVRegisterInfo : public RISCVGenRegisterInfo {
   void updateRegAllocHint(Register Reg, Register NewReg,
                           MachineFunction &MF) const override;
 
+  bool shouldCoalesce(MachineInstr *MI, const TargetRegisterClass *SrcRC,
+                      unsigned SubReg, const TargetRegisterClass *DstRC,
+                      unsigned DstSubReg, const TargetRegisterClass *NewRC,
+                      LiveIntervals &LIS) const override;
+
   Register findVRegWithEncoding(const TargetRegisterClass &RegClass,
                                 uint16_t Encoding) const;
 

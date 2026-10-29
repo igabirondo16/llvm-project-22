@@ -58,8 +58,8 @@ private:
                             MachineBasicBlock::iterator MBBI);
   bool expandRV32ZdinxLoad(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MBBI);
-  bool expandXRLoadStore8(MachineBasicBlock &MBB,
-                          MachineBasicBlock::iterator MBBI);
+  bool expandXRLoadStore(MachineBasicBlock &MBB,
+                         MachineBasicBlock::iterator MBBI);
   bool expandXRVLoad(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI);
   bool expandXRMAC(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI);
   bool expandPseudoReadVLENBViaVSETVLIX0(MachineBasicBlock &MBB,
@@ -126,21 +126,36 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
     return expandRV32ZdinxLoad(MBB, MBBI);
   case RISCV::PseudoXRLoad8:
   case RISCV::PseudoXRStore8:
-    return expandXRLoadStore8(MBB, MBBI);
-  case RISCV::PseudoXRVLoad:
+  case RISCV::PseudoXRLoad4:
+  case RISCV::PseudoXRStore4:
+    return expandXRLoadStore(MBB, MBBI);
+  case RISCV::PseudoXRVLoad8:
+  case RISCV::PseudoXRVLoad4:
     return expandXRVLoad(MBB, MBBI);
-  case RISCV::PseudoXRMAC_SSS:
-  case RISCV::PseudoXRMAC_SSV:
-  case RISCV::PseudoXRMAC_SVS:
-  case RISCV::PseudoXRMAC_SVV:
-  case RISCV::PseudoXRMAC_VSS:
-  case RISCV::PseudoXRMAC_VSV:
-  case RISCV::PseudoXRMAC_VVS:
-  case RISCV::PseudoXRMAC_VVV:
-  case RISCV::PseudoXRDot_SS:
-  case RISCV::PseudoXRDot_SV:
-  case RISCV::PseudoXRDot_VS:
-  case RISCV::PseudoXRDot_VV:
+  case RISCV::PseudoXRMAC8_SSS:
+  case RISCV::PseudoXRMAC8_SSV:
+  case RISCV::PseudoXRMAC8_SVS:
+  case RISCV::PseudoXRMAC8_SVV:
+  case RISCV::PseudoXRMAC8_VSS:
+  case RISCV::PseudoXRMAC8_VSV:
+  case RISCV::PseudoXRMAC8_VVS:
+  case RISCV::PseudoXRMAC8_VVV:
+  case RISCV::PseudoXRDot8_SS:
+  case RISCV::PseudoXRDot8_SV:
+  case RISCV::PseudoXRDot8_VS:
+  case RISCV::PseudoXRDot8_VV:
+  case RISCV::PseudoXRMAC4_SSS:
+  case RISCV::PseudoXRMAC4_SSV:
+  case RISCV::PseudoXRMAC4_SVS:
+  case RISCV::PseudoXRMAC4_SVV:
+  case RISCV::PseudoXRMAC4_VSS:
+  case RISCV::PseudoXRMAC4_VSV:
+  case RISCV::PseudoXRMAC4_VVS:
+  case RISCV::PseudoXRMAC4_VVV:
+  case RISCV::PseudoXRDot4_SS:
+  case RISCV::PseudoXRDot4_SV:
+  case RISCV::PseudoXRDot4_VS:
+  case RISCV::PseudoXRDot4_VV:
     return expandXRMAC(MBB, MBBI);
   case RISCV::PseudoCCMOVGPRNoX0:
   case RISCV::PseudoCCMOVGPR:
@@ -586,10 +601,16 @@ bool RISCVExpandPseudo::expandRV32ZdinxLoad(MachineBasicBlock &MBB,
   return true;
 }
 
-// Expands PseudoXRLoad8/PseudoXRStore8 into eight LW/SW of the consecutive
-// GPRs of an XRepeat vector register.
-bool RISCVExpandPseudo::expandXRLoadStore8(MachineBasicBlock &MBB,
-                                           MachineBasicBlock::iterator MBBI) {
+// True for the XRepeat vector registers (both widths).
+static bool isXRVecReg(Register Reg) {
+  return RISCV::XRVecRegClass.contains(Reg) ||
+         RISCV::XRVec4RegClass.contains(Reg);
+}
+
+// Expands PseudoXRLoad8/4 and PseudoXRStore8/4 into one LW/SW for each of the
+// consecutive GPRs of an XRepeat vector register.
+bool RISCVExpandPseudo::expandXRLoadStore(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MBBI) {
   static constexpr unsigned SubRegs[] = {
       RISCV::sub_xr0, RISCV::sub_xr1, RISCV::sub_xr2, RISCV::sub_xr3,
       RISCV::sub_xr4, RISCV::sub_xr5, RISCV::sub_xr6, RISCV::sub_xr7};
@@ -597,12 +618,15 @@ bool RISCVExpandPseudo::expandXRLoadStore8(MachineBasicBlock &MBB,
   DebugLoc DL = MBBI->getDebugLoc();
   const TargetRegisterInfo *TRI = STI->getRegisterInfo();
   MachineFunction *MF = MBB.getParent();
-  bool IsLoad = MBBI->getOpcode() == RISCV::PseudoXRLoad8;
+  unsigned Opc = MBBI->getOpcode();
+  bool IsLoad = Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRLoad4;
+  unsigned NumElts =
+      Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRStore8 ? 8 : 4;
   Register VReg = MBBI->getOperand(0).getReg();
   Register Base = MBBI->getOperand(1).getReg();
   int64_t Offset = MBBI->getOperand(2).getImm();
 
-  for (unsigned I = 0; I < 8; ++I) {
+  for (unsigned I = 0; I < NumElts; ++I) {
     Register Reg = TRI->getSubReg(VReg, SubRegs[I]);
     int64_t Imm = Offset + 4 * I;
     assert(isInt<12>(Imm) && "XRepeat load/store offset out of range");
@@ -625,7 +649,7 @@ bool RISCVExpandPseudo::expandXRLoadStore8(MachineBasicBlock &MBB,
   return true;
 }
 
-// Expands PseudoXRVLoad into a LW of the first element of the XRepeat vector
+// Expands PseudoXRVLoad8/4 into a LW of the first element of the XRepeat vector
 // register followed by a REPEAT whose mask walks rd. The REPEAT carries the
 // whole register as an implicit def, and the base as an implicit use since it
 // is read again on every step.
@@ -654,10 +678,10 @@ bool RISCVExpandPseudo::expandXRVLoad(MachineBasicBlock &MBB,
   return true;
 }
 
-// Expands PseudoXRMAC_* and PseudoXRDot_* into an XR_MAC on the first element
+// Expands PseudoXRMAC* and PseudoXRDot* into an XR_MAC on the first element
 // of each XRepeat vector operand followed by a REPEAT. The mask walks every
 // operand that is an XRepeat vector register; scalar ones stay fixed (for
-// PseudoXRDot_*, rd = rs3 is a scalar accumulator). MAC repeats don't use the
+// PseudoXRDot*, rd = rs3 is a scalar accumulator). MAC repeats don't use the
 // stride, so it is x0.
 bool RISCVExpandPseudo::expandXRMAC(MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator MBBI) {
@@ -666,11 +690,11 @@ bool RISCVExpandPseudo::expandXRMAC(MachineBasicBlock &MBB,
   Register VReg = MBBI->getOperand(0).getReg();
   const MachineOperand &Count = MBBI->getOperand(4);
 
-  unsigned Mask = RISCV::XRVecRegClass.contains(VReg) ? 0b0001 : 0b0000;
+  unsigned Mask = isXRVecReg(VReg) ? 0b0001 : 0b0000;
   Register First[3];
   for (unsigned I = 0; I < 3; ++I) {
     Register Reg = MBBI->getOperand(I + 1).getReg();
-    if (RISCV::XRVecRegClass.contains(Reg)) {
+    if (isXRVecReg(Reg)) {
       Mask |= 1 << (I + 1);
       First[I] = TRI->getSubReg(Reg, RISCV::sub_xr0);
     } else {

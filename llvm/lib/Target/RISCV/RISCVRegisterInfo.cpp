@@ -555,10 +555,12 @@ bool RISCVRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
       // instruction will add 4 to the immediate. If that would overflow 12
       // bits, we can't fold the offset.
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(0);
-    } else if ((Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRStore8) &&
-               !isInt<12>(Lo12 + 28)) {
-      // Expanded into 8 LW/SW at offsets +0..+28; if the last one would not
-      // fit in 12 bits, don't fold the offset.
+    } else if (((Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRStore8) &&
+                !isInt<12>(Lo12 + 28)) ||
+               ((Opc == RISCV::PseudoXRLoad4 || Opc == RISCV::PseudoXRStore4) &&
+                !isInt<12>(Lo12 + 12))) {
+      // Expanded into 8 (or 4) LW/SW at offsets +0..+28 (+12); if the last
+      // one would not fit in 12 bits, don't fold the offset.
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(0);
     } else {
       // We can encode an add with 12 bit signed immediate in the immediate
@@ -860,6 +862,21 @@ RISCVRegisterInfo::getRegisterCostTableIndex(const MachineFunction &MF) const {
 float RISCVRegisterInfo::getSpillWeightScaleFactor(
     const TargetRegisterClass *RC) const {
   return getRegClassWeight(RC).RegWeight;
+}
+
+bool RISCVRegisterInfo::shouldCoalesce(
+    MachineInstr *MI, const TargetRegisterClass *SrcRC, unsigned SubReg,
+    const TargetRegisterClass *DstRC, unsigned DstSubReg,
+    const TargetRegisterClass *NewRC, LiveIntervals &LIS) const {
+  // XRepeat: don't merge a <4 x i32> block into half of an <8 x i32> one. That
+  // ties the two live ranges together, so the <4 x i32> value then needs a
+  // whole 8-register block; with only three of them, the extra pressure costs
+  // more spills than the four register moves it saves.
+  if (RISCV::XRVecRegClass.hasSubClassEq(NewRC) &&
+      (RISCV::XRVec4RegClass.hasSubClassEq(SrcRC) ||
+       RISCV::XRVec4RegClass.hasSubClassEq(DstRC)))
+    return false;
+  return true;
 }
 
 // Add two address hints to improve chances of being able to use a compressed

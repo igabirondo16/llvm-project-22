@@ -36,8 +36,9 @@ class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
 
   const RISCVSubtarget *getST() const { return ST; }
 
-  /// True when XRepeat provides the fixed-length vectors: three <8 x i32>
-  /// blocks of GPRs (x8..x15, x16..x23, x24..x31) instead of RVV registers.
+  /// True when XRepeat provides the fixed-length vectors: blocks of GPRs
+  /// instead of RVV registers, either three <8 x i32> (x8..x15, x16..x23,
+  /// x24..x31) or six <4 x i32> (x8..x11, x12..x15, ..., x28..x31).
   bool hasXRepeatVectors() const {
     return ST->hasVendorXRepeat() && !ST->hasVInstructions();
   }
@@ -59,8 +60,8 @@ class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
   }
 
   /// Cost of an operation that XRepeat does with one instruction + REPEAT
-  /// pair per <8 x i32> block of \p Ty, or std::nullopt if \p Ty isn't
-  /// legalized to such blocks.
+  /// pair per <8 x i32> or <4 x i32> block of \p Ty, or std::nullopt if \p Ty
+  /// isn't legalized to such blocks.
   std::optional<InstructionCost> getXRepeatPairCost(Type *Ty) const;
   const RISCVTargetLowering *getTLI() const { return TLI; }
 
@@ -445,7 +446,7 @@ public:
     // Don't interleave if the loop has been vectorized with scalable vectors.
     if (VF.isScalable())
       return 1;
-    // XRepeat has only three vector registers.
+    // XRepeat has only six (or three) vector registers.
     if (hasXRepeatVectors())
       return 1;
     // If the loop will not be vectorized, don't interleave the loop.
@@ -479,8 +480,9 @@ public:
       // vector registers?
       if (ST->hasVInstructions())
         return 32;
-      // XRepeat: the three 8-GPR blocks.
-      return hasXRepeatVectors() ? 3 : 0;
+      // XRepeat: the six 4-GPR blocks (an 8-GPR block counts as two, see
+      // getRegUsageForType).
+      return hasXRepeatVectors() ? 6 : 0;
     }
     llvm_unreachable("unknown register class");
   }

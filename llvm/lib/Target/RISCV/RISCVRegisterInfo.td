@@ -80,12 +80,27 @@ def sub_gpr_odd  : SubRegIndex<32, 32> {
                                          [SubRegRange<32, 32>, SubRegRange<64, 64>]>;
 }
 
-// XRepeat: the 8 GPRs of a repeat_rv vector register (sub_xr0 is the first).
+// XRepeat: the 8 (or 4) GPRs of a repeat_rv vector register (sub_xr0 is the
+// first).
 foreach I = 0-7 in {
   def sub_xr # I : SubRegIndex<32, !mul(32, I)> {
     let SubRegRanges = SubRegRangeByHwMode<[RV32, RV64],
                                            [SubRegRange<32, !mul(32, I)>,
                                             SubRegRange<64, !mul(64, I)>]>;
+  }
+}
+
+// XRepeat: the low and high <4 x i32> halves of an <8 x i32> register.
+foreach Half = [0, 1] in {
+  defvar First = !mul(4, Half);
+  def "sub_xr" # !if(Half, "hi", "lo")
+      : SubRegIndex<128, !mul(128, Half)> {
+    let SubRegRanges = SubRegRangeByHwMode<[RV32, RV64],
+                                           [SubRegRange<128, !mul(128, Half)>,
+                                            SubRegRange<256, !mul(256, Half)>]>;
+    let CoveringSubRegIndices =
+        !foreach(I, !range(First, !add(First, 4)),
+                 !cast<SubRegIndex>("sub_xr" # I));
   }
 }
 } // Namespace = "RISCV"
@@ -395,18 +410,20 @@ def GPRPairC : RISCVRegisterClass<[XLenPairVT, XLenPairFVT], 64, (add
 } // let RegInfos = XLenPairRI, CopyCost = 2
 
 //===----------------------------------------------------------------------===//
-// XRepeat vector registers: 8 consecutive GPRs starting at x8, x16 or x24
+// XRepeat vector registers: 8 consecutive GPRs starting at x8, x16 or x24, or
+// 4 consecutive GPRs starting at x8, x12, ..., x28
 //===----------------------------------------------------------------------===//
 
 let RegAltNameIndices = [ABIRegAltName] in {
-  foreach Base = [8, 16, 24] in {
+  foreach Width = [8, 4] in
+  foreach Base = !range(8, 32, Width) in {
     defvar Reg = !cast<Register>("X" # Base);
-    def "X" # Base # "_X" # !add(Base, 7)
+    def "X" # Base # "_X" # !add(Base, !sub(Width, 1))
         : RISCVRegWithSubRegs<Base, Reg.AsmName,
-                              !foreach(I, !range(8),
+                              !foreach(I, !range(Width),
                                        !cast<Register>("X" # !add(Base, I))),
                               Reg.AltNames> {
-      let SubRegIndices = !foreach(I, !range(8),
+      let SubRegIndices = !foreach(I, !range(Width),
                                    !cast<SubRegIndex>("sub_xr" # I));
       let CoveredBySubRegs = 1;
     }
@@ -415,6 +432,8 @@ let RegAltNameIndices = [ABIRegAltName] in {
 
 def XRVecRI : RegInfoByHwMode<[RV32, RV64],
                               [RegInfo<256, 256, 32>, RegInfo<512, 512, 64>]>;
+def XRVec4RI : RegInfoByHwMode<[RV32, RV64],
+                               [RegInfo<128, 128, 32>, RegInfo<256, 256, 64>]>;
 
 // Allocation order: x24..x31 and x16..x23 first, x8..x15 (which holds the
 // argument registers a0-a5 and the frame pointer) last. No pressure sets of its
@@ -422,6 +441,13 @@ def XRVecRI : RegInfoByHwMode<[RV32, RV64],
 // new sets would change scheduling even when XRepeat is disabled.
 let RegInfos = XRVecRI, CopyCost = 8, GeneratePressureSet = 0 in
 def XRVec : RISCVRegisterClass<[v8i32], 32, (add X24_X31, X16_X23, X8_X15)>;
+
+// Same order for the 4-register blocks; x8..x11 (frame pointer, s1, a0, a1)
+// goes last.
+let RegInfos = XRVec4RI, CopyCost = 4, GeneratePressureSet = 0 in
+def XRVec4 : RISCVRegisterClass<[v4i32], 32,
+                                (add X24_X27, X28_X31, X16_X19, X20_X23,
+                                     X12_X15, X8_X11)>;
 
 //===----------------------------------------------------------------------===//
 // Floating Point registers
