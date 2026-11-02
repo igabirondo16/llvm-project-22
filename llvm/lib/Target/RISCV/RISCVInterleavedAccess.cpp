@@ -197,6 +197,53 @@ static bool getMemOperands(unsigned Factor, VectorType *VTy, Type *XLenTy,
 
 /// Lower an interleaved load into a vlsegN intrinsic.
 ///
+/// XRepeat: lower each field of an interleaved load to its own strided load,
+/// which becomes LW + REPEAT with stride Factor * 4 bytes.
+///
+/// E.g. (Factor = 8, as the loop vectorizer emits for B[k][0..7] at VF = 8):
+/// %wide.vec = load <64 x i32>, ptr %p
+/// %v1 = shufflevector %wide.vec, poison, <1, 9, 17, ..., 57>
+/// =>
+/// %p1 = getelementptr i8, ptr %p, i32 4
+/// %v1 = call <8 x i32> @llvm.experimental.vp.strided.load(ptr %p1, i32 32,
+///                                                          <all true>, i32 8)
+///
+/// Only plain loads whose fields are whole <8 x i32> or <4 x i32> blocks are
+/// handled; anything else is left alone (and is split up element by element).
+bool RISCVTargetLowering::lowerXRepeatInterleavedLoad(
+    Instruction *Load, Value *Mask, ArrayRef<ShuffleVectorInst *> Shuffles,
+    ArrayRef<unsigned> Indices, unsigned Factor) const {
+  auto *LI = dyn_cast<LoadInst>(Load);
+  if (!LI || Mask)
+    return false;
+  auto *VTy = cast<FixedVectorType>(Shuffles[0]->getType());
+  const DataLayout &DL = Load->getDataLayout();
+  EVT VT = getValueType(DL, VTy);
+  if ((VT != MVT::v8i32 && VT != MVT::v4i32) || LI->getAlign() < Align(4))
+    return false;
+
+  IRBuilder<> Builder(Load);
+  Type *XLenTy = Builder.getIntNTy(Subtarget.getXLen());
+  Value *Ptr = LI->getPointerOperand();
+  unsigned EltBytes = DL.getTypeStoreSize(VTy->getElementType());
+  Value *Stride = ConstantInt::get(XLenTy, Factor * EltBytes);
+  Value *AllTrue = Builder.getAllOnesMask(VTy->getElementCount());
+  Value *EVL = Builder.getInt32(VTy->getNumElements());
+  for (auto [Shuffle, Field] : zip(Shuffles, Indices)) {
+    Value *FieldPtr = Builder.CreateConstGEP1_32(Builder.getInt8Ty(), Ptr,
+                                                 Field * EltBytes);
+    CallInst *FieldLoad = Builder.CreateIntrinsic(
+        Intrinsic::experimental_vp_strided_load,
+        {VTy, FieldPtr->getType(), XLenTy}, {FieldPtr, Stride, AllTrue, EVL});
+    FieldLoad->addParamAttr(
+        0, Attribute::getWithAlignment(
+               Load->getContext(),
+               commonAlignment(LI->getAlign(), Field * EltBytes)));
+    Shuffle->replaceAllUsesWith(FieldLoad);
+  }
+  return true;
+}
+
 /// E.g. Lower an interleaved load (Factor = 2):
 /// %wide.vec = load <8 x i32>, <8 x i32>* %ptr
 /// %v0 = shuffle %wide.vec, undef, <0, 2, 4, 6>  ; Extract even elements
@@ -212,6 +259,9 @@ bool RISCVTargetLowering::lowerInterleavedLoad(
     ArrayRef<unsigned> Indices, unsigned Factor, const APInt &GapMask) const {
   assert(Indices.size() == Shuffles.size());
   assert(GapMask.getBitWidth() == Factor);
+
+  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions())
+    return lowerXRepeatInterleavedLoad(Load, Mask, Shuffles, Indices, Factor);
 
   // We only support cases where the skipped fields are the trailing ones.
   // TODO: Lower to strided load if there is only a single active field.

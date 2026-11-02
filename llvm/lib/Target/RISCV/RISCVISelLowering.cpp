@@ -836,6 +836,11 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
       setOperationAction({ISD::EXTRACT_SUBVECTOR, ISD::INSERT_SUBVECTOR,
                           ISD::CONCAT_VECTORS},
                          XRVT, Custom);
+      // Strided loads are LW + REPEAT with the stride in a register; strided
+      // stores are one SW per element (REPEAT can't repeat stores).
+      setOperationAction(
+          {ISD::EXPERIMENTAL_VP_STRIDED_LOAD, ISD::EXPERIMENTAL_VP_STRIDED_STORE},
+          XRVT, Custom);
       // No extending loads into, or truncating stores from, these types.
       for (MVT VT : MVT::fixedlen_vector_valuetypes()) {
         setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, XRVT,
@@ -843,6 +848,13 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
         setTruncStoreAction(XRVT, VT, Expand);
       }
     }
+    // The strided loads/stores' all-true <N x i1> mask has no legal type.
+    // Type legalization offers the node to the target first, keyed by that
+    // operand's type, so it reaches lowerXRepeatOperation before the generic
+    // code (which can't promote a VP mask) sees it.
+    setOperationAction(
+        {ISD::EXPERIMENTAL_VP_STRIDED_LOAD, ISD::EXPERIMENTAL_VP_STRIDED_STORE},
+        {MVT::v8i1, MVT::v4i1}, Custom);
     // Split reductions of sums into sums of reductions (dot products).
     setTargetDAGCombine(ISD::VECREDUCE_ADD);
   }
@@ -7900,6 +7912,14 @@ bool RISCVTargetLowering::shouldReassociateReduction(unsigned RedOpc,
   return TargetLowering::shouldReassociateReduction(RedOpc, VT);
 }
 
+// True if a VP operation on XRepeat type VT is unmasked and covers the whole
+// vector: an all-true mask and an explicit vector length of VT's element count.
+static bool isXRepeatFullVPOp(SDValue Mask, SDValue EVL, EVT VT) {
+  auto *Len = dyn_cast<ConstantSDNode>(EVL);
+  return ISD::isConstantSplatVectorAllOnes(Mask.getNode()) && Len &&
+         Len->getZExtValue() == VT.getVectorNumElements();
+}
+
 // Custom lowering of the v8i32/v4i32 operations XRepeat marks Custom.
 // Returning an empty SDValue falls back to expansion (scalarization), and
 // returning Op leaves it to instruction selection.
@@ -7958,6 +7978,45 @@ static SDValue lowerXRepeatOperation(SDValue Op, SelectionDAG &DAG) {
                           DAG.getVectorIdxConstant(I, DL));
     return Vec;
   }
+  case ISD::EXPERIMENTAL_VP_STRIDED_LOAD: {
+    // LW + REPEAT with the stride in a register. Only the unmasked, full-length
+    // form is supported, which is the only one the vectorizers emit for
+    // XRepeat (SLP and the interleaved access lowering).
+    auto *SL = cast<VPStridedLoadSDNode>(Op);
+    if (!isXRepeatFullVPOp(SL->getMask(), SL->getVectorLength(), VT) ||
+        SL->getExtensionType() != ISD::NON_EXTLOAD || !SL->isUnindexed())
+      return SDValue();
+    return DAG.getMemIntrinsicNode(
+        RISCVISD::XR_STRIDED_LOAD, DL, DAG.getVTList(VT, MVT::Other),
+        {SL->getChain(), SL->getBasePtr(), SL->getStride()}, VT,
+        SL->getMemOperand());
+  }
+  case ISD::EXPERIMENTAL_VP_STRIDED_STORE: {
+    // REPEAT can't repeat stores, so this is one SW per element, like an
+    // ordinary vector store (SLP uses stride -4 for reversed stores).
+    auto *SS = cast<VPStridedStoreSDNode>(Op);
+    SDValue Val = SS->getValue();
+    EVT ValVT = Val.getValueType();
+    if (!isXRepeatFullVPOp(SS->getMask(), SS->getVectorLength(), ValVT) ||
+        SS->isTruncatingStore() || !SS->isUnindexed())
+      return SDValue();
+    EVT PtrVT = SS->getBasePtr().getValueType();
+    Align EltAlign = commonAlignment(SS->getAlign(), 4);
+    SmallVector<SDValue, 8> Stores;
+    for (unsigned I = 0, E = ValVT.getVectorNumElements(); I != E; ++I) {
+      SDValue Elt = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, MVT::i32, Val,
+                                DAG.getVectorIdxConstant(I, DL));
+      SDValue Offset = DAG.getNode(ISD::MUL, DL, PtrVT, SS->getStride(),
+                                   DAG.getConstant(I, DL, PtrVT));
+      SDValue Addr =
+          DAG.getNode(ISD::ADD, DL, PtrVT, SS->getBasePtr(), Offset);
+      Stores.push_back(DAG.getStore(
+          SS->getChain(), DL, Elt, Addr,
+          MachinePointerInfo(SS->getPointerInfo().getAddrSpace()), EltAlign,
+          SS->getMemOperand()->getFlags()));
+    }
+    return DAG.getNode(ISD::TokenFactor, DL, MVT::Other, Stores);
+  }
   case ISD::SHL: {
     // a << k == a * (1 << k).
     SDValue Amt = Op.getOperand(1);
@@ -7980,7 +8039,9 @@ SDValue RISCVTargetLowering::LowerOperation(SDValue Op,
       (isXRepeatVT(Op.getValueType()) ||
        ((Op.getOpcode() == ISD::VECREDUCE_ADD ||
          Op.getOpcode() == ISD::EXTRACT_VECTOR_ELT) &&
-        isXRepeatVT(Op.getOperand(0).getValueType()))))
+        isXRepeatVT(Op.getOperand(0).getValueType())) ||
+       (Op.getOpcode() == ISD::EXPERIMENTAL_VP_STRIDED_STORE &&
+        isXRepeatVT(Op.getOperand(1).getValueType()))))
     return lowerXRepeatOperation(Op, DAG);
 
   switch (Op.getOpcode()) {
@@ -25957,6 +26018,12 @@ Value *RISCVTargetLowering::getIRStackGuard(IRBuilderBase &IRB) const {
 
 bool RISCVTargetLowering::isLegalStridedLoadStore(EVT DataType,
                                                   Align Alignment) const {
+  // XRepeat: a strided load is LW + REPEAT with the stride in a register, and
+  // a strided store is one SW per element (see lowerXRepeatOperation).
+  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions())
+    return (DataType == MVT::v8i32 || DataType == MVT::v4i32) &&
+           Alignment >= Align(4);
+
   if (!Subtarget.hasVInstructions())
     return false;
 

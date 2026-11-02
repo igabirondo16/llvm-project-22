@@ -9,6 +9,7 @@
 #include "RISCVTargetTransformInfo.h"
 #include "MCTargetDesc/RISCVMatInt.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/CodeGen/CostTable.h"
@@ -43,6 +44,12 @@ static cl::opt<unsigned>
                     cl::desc("Set the lower bound of a trip count to decide on "
                              "vectorization while tail-folding."),
                     cl::init(5), cl::Hidden);
+
+static cl::opt<bool> XRepeatKeepSmallLoops(
+    "riscv-xrepeat-keep-small-loops",
+    cl::desc("XRepeat: don't fully unroll small loops that the loop vectorizer "
+             "can turn into whole XRepeat blocks"),
+    cl::init(true), cl::Hidden);
 
 InstructionCost
 RISCVTTIImpl::getRISCVInstructionCost(ArrayRef<unsigned> OpCodes, MVT VT,
@@ -699,6 +706,9 @@ RISCVTTIImpl::getShuffleCost(TTI::ShuffleKind Kind, VectorType *DstTy,
 
   if (isXRepeatVector(SrcTy) || isXRepeatVector(DstTy)) {
     // A splat is a MAC of the scalar by 1; other shuffles are scalarized.
+    // Callers such as SLP ask for a splat as a single-source permute with an
+    // all-zero mask, so recognize the kind from the mask first.
+    Kind = improveShuffleKindFromMask(Kind, Mask, SrcTy, Index, SubTp);
     if (Kind == TTI::SK_Broadcast)
       if (std::optional<InstructionCost> Cost = getXRepeatPairCost(DstTy))
         return *Cost;
@@ -1069,6 +1079,12 @@ RISCVTTIImpl::getMemIntrinsicInstrCost(const MemIntrinsicCostAttributes &MICA,
                                        TTI::TargetCostKind CostKind) const {
   Type *DataTy = MICA.getDataType();
   Align Alignment = MICA.getAlignment();
+  // XRepeat supports strided loads and stores (see getStridedMemoryOpCost);
+  // every other memory intrinsic on its vectors is unsupported.
+  if (isXRepeatVector(DataTy) &&
+      (MICA.getID() == Intrinsic::experimental_vp_strided_load ||
+       MICA.getID() == Intrinsic::experimental_vp_strided_store))
+    return getStridedMemoryOpCost(MICA, CostKind);
   if (isUnsupportedXRepeatOp(DataTy, CostKind))
     return InstructionCost::getInvalid();
   switch (MICA.getID()) {
@@ -1121,6 +1137,25 @@ InstructionCost RISCVTTIImpl::getInterleavedMemoryOpCost(
     unsigned Opcode, Type *VecTy, unsigned Factor, ArrayRef<unsigned> Indices,
     Align Alignment, unsigned AddressSpace, TTI::TargetCostKind CostKind,
     bool UseMaskForCond, bool UseMaskForGaps) const {
+  // XRepeat: each field of an interleaved load is a strided load, LW + REPEAT
+  // with stride Factor * 4 (lowerXRepeatInterleavedLoad), so the group costs
+  // one LW + REPEAT per field it uses. Masked groups and interleaved stores
+  // aren't supported.
+  if (isXRepeatVector(VecTy) && Opcode == Instruction::Load &&
+      !UseMaskForCond && !UseMaskForGaps && Factor >= 2 &&
+      Factor <= TLI->getMaxSupportedInterleaveFactor() &&
+      Alignment >= Align(4)) {
+    auto *FVTy = cast<FixedVectorType>(VecTy);
+    if (FVTy->getNumElements() % Factor == 0) {
+      auto *FieldTy = FixedVectorType::get(FVTy->getElementType(),
+                                           FVTy->getNumElements() / Factor);
+      EVT FieldVT = TLI->getValueType(DL, FieldTy);
+      if (FieldVT == MVT::v8i32 || FieldVT == MVT::v4i32) {
+        unsigned NumFields = Indices.empty() ? Factor : Indices.size();
+        return NumFields * *getXRepeatPairCost(FieldTy);
+      }
+    }
+  }
   if (isUnsupportedXRepeatOp(VecTy, CostKind))
     return InstructionCost::getInvalid();
 
@@ -1296,6 +1331,19 @@ RISCVTTIImpl::getStridedMemoryOpCost(const MemIntrinsicCostAttributes &MICA,
   Type *DataTy = MICA.getDataType();
   Align Alignment = MICA.getAlignment();
   const Instruction *I = MICA.getInst();
+
+  // XRepeat: a strided load is LW + REPEAT and a strided store one SW per
+  // element, exactly like the contiguous ones; only the stride register
+  // differs.
+  if (isXRepeatVector(DataTy)) {
+    if (!isLegalStridedLoadStore(DataTy, Alignment))
+      return isUnsupportedXRepeatOp(DataTy, CostKind)
+                 ? InstructionCost::getInvalid()
+                 : BaseT::getMemIntrinsicInstrCost(MICA, CostKind);
+    return getMemoryOpCost(Opcode, DataTy, Alignment,
+                           MICA.getAddressSpace(), CostKind,
+                           {TTI::OK_AnyValue, TTI::OP_None}, I);
+  }
 
   if (!isLegalStridedLoadStore(DataTy, Alignment))
     return BaseT::getMemIntrinsicInstrCost(MICA, CostKind);
@@ -2872,6 +2920,68 @@ InstructionCost RISCVTTIImpl::getPointersChainCost(
   return Cost;
 }
 
+// XRepeat: whether \p L is a small innermost loop that the loop vectorizer can
+// turn into whole XRepeat blocks: a constant trip count that is a multiple of
+// 4, and a body of only i32 add/sub/mul on loads with stride 1 or a
+// loop-invariant address, stored back with stride 1. Fully unrolling such a
+// loop before the vectorizer leaves only scalar code that SLP rarely recovers
+// (e.g. C[0..7] += A[k] * B[k][0..7] becomes 8 scalar accumulators).
+static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE) {
+  if (!L->isInnermost() || !L->getLoopLatch() || !L->getExitingBlock())
+    return false;
+  unsigned TC = SE.getSmallConstantTripCount(L);
+  if (TC < 4 || TC % 4 != 0)
+    return false;
+
+  // Stride 1 for i32 accesses is a step of 4 bytes per iteration.
+  auto IsUnitStride = [&](const Value *Ptr) {
+    const auto *AR = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(const_cast<Value *>(Ptr)));
+    if (!AR || AR->getLoop() != L)
+      return false;
+    const auto *Step = dyn_cast<SCEVConstant>(AR->getStepRecurrence(SE));
+    return Step && Step->getAPInt() == 4;
+  };
+
+  bool HasArith = false, HasStore = false;
+  for (const BasicBlock *BB : L->blocks()) {
+    for (const Instruction &I : *BB) {
+      if (isa<PHINode, GetElementPtrInst, BranchInst, ICmpInst>(I) ||
+          I.isDebugOrPseudoInst())
+        continue;
+      if (const auto *LI = dyn_cast<LoadInst>(&I)) {
+        if (!LI->isSimple() || !LI->getType()->isIntegerTy(32))
+          return false;
+        const Value *Ptr = LI->getPointerOperand();
+        if (!IsUnitStride(Ptr) && !L->isLoopInvariant(Ptr))
+          return false;
+        continue;
+      }
+      if (const auto *SI = dyn_cast<StoreInst>(&I)) {
+        if (!SI->isSimple() ||
+            !SI->getValueOperand()->getType()->isIntegerTy(32) ||
+            !IsUnitStride(SI->getPointerOperand()))
+          return false;
+        HasStore = true;
+        continue;
+      }
+      switch (I.getOpcode()) {
+      case Instruction::Add:
+      case Instruction::Sub:
+      case Instruction::Mul:
+        if (!I.getType()->isIntegerTy(32))
+          return false;
+        // Only arithmetic on loaded data counts, not the induction update.
+        HasArith |= any_of(I.operand_values(),
+                           [](const Value *V) { return isa<LoadInst>(V); });
+        continue;
+      default:
+        return false;
+      }
+    }
+  }
+  return HasArith && HasStore;
+}
+
 void RISCVTTIImpl::getUnrollingPreferences(
     Loop *L, ScalarEvolution &SE, TTI::UnrollingPreferences &UP,
     OptimizationRemarkEmitter *ORE) const {
@@ -2891,6 +3001,16 @@ void RISCVTTIImpl::getUnrollingPreferences(
                  });
         });
       })) {
+    UP.FullUnrollMaxCount = 0;
+    return;
+  }
+
+  // XRepeat: keep small loops the loop vectorizer can turn into whole blocks
+  // rolled until it has seen them (what #pragma clang loop unroll(disable)
+  // does by hand). If the vectorizer still rejects the loop, it stays rolled.
+  if (XRepeatKeepSmallLoops && hasXRepeatVectors() &&
+      !getBooleanLoopAttribute(L, "llvm.loop.isvectorized") &&
+      isXRepeatVectorizableSmallLoop(L, SE)) {
     UP.FullUnrollMaxCount = 0;
     return;
   }

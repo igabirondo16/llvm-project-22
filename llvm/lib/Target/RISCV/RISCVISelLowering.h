@@ -436,6 +436,12 @@ public:
                             ArrayRef<unsigned> Indices, unsigned Factor,
                             const APInt &GapMask) const override;
 
+  /// XRepeat's lowerInterleavedLoad: one strided load (LW + REPEAT) per field.
+  bool lowerXRepeatInterleavedLoad(Instruction *Load, Value *Mask,
+                                   ArrayRef<ShuffleVectorInst *> Shuffles,
+                                   ArrayRef<unsigned> Indices,
+                                   unsigned Factor) const;
+
   bool lowerInterleavedStore(Instruction *Store, Value *Mask,
                              ShuffleVectorInst *SVI, unsigned Factor,
                              const APInt &GapMask) const override;

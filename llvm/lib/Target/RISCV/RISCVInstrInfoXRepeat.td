@@ -67,6 +67,18 @@ def SDT_XRDot : SDTypeProfile<1, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
                                      SDTCisSameAs<2, 3>]>;
 def riscv_xr_dot : RVSDNode<"XR_DOT", SDT_XRDot>;
 
+// Strided load: element i comes from ptr + i * stride (stride in bytes, in a
+// register). Lowered from llvm.experimental.vp.strided.load, which SLP emits
+// directly and the interleaved access pass emits for each field of an
+// interleave group (see RISCVInterleavedAccess.cpp).
+def SDT_XRStridedLoad : SDTypeProfile<1, 2, [SDTCisVec<0>,
+                                             SDTCVecEltisVT<0, i32>,
+                                             SDTCisPtrTy<1>,
+                                             SDTCisVT<2, i32>]>;
+def riscv_xr_strided_load
+    : RVSDNode<"XR_STRIDED_LOAD", SDT_XRStridedLoad,
+               [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
+
 // One XRepeat vector width: its type, register class, and the REPEAT count
 // (number of elements - 1) that covers a whole register.
 class XRVecInfo<int width, ValueType vt, RegisterClass rc> {
@@ -150,6 +162,12 @@ foreach B = [0, 1] in {
 def : Pat<(V.VT (load (AddrRegImm (XLenVT GPRMem:$rs1), simm12_lo:$imm12))),
           (!cast<Instruction>("PseudoXRVLoad" # W)
                GPRMem:$rs1, simm12_lo:$imm12, XRStride4, V.Count)>;
+// The same LW + REPEAT, with any stride.
+def : Pat<(V.VT (riscv_xr_strided_load
+                    (AddrRegImm (XLenVT GPRMem:$rs1), simm12_lo:$imm12),
+                    (XLenVT GPR:$stride))),
+          (!cast<Instruction>("PseudoXRVLoad" # W)
+               GPRMem:$rs1, simm12_lo:$imm12, GPR:$stride, V.Count)>;
 def : Pat<(store (V.VT V.RC:$vs), (XLenVT GPRMem:$rs1)),
           (!cast<Instruction>("PseudoXRStore" # W) V.RC:$vs, GPRMem:$rs1, 0)>;
 
