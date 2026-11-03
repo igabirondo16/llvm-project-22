@@ -1,0 +1,297 @@
+
+/home/igabirondo/tesis/dl4compilers/llvm-project-22/.custom_repeat_inst/asm_compare/dotxvf/base_xrepeat.o:	file format elf32-littleriscv
+
+Disassembly of section .text:
+
+00000000 <main>:
+       0:      	addi	x2, x2, -0x40
+       4:      	sw	x1, 0x3c(x2)
+       8:      	sw	x8, 0x38(x2)
+       c:      	sw	x9, 0x34(x2)
+      10:      	sw	x18, 0x30(x2)
+      14:      	sw	x19, 0x2c(x2)
+      18:      	sw	x20, 0x28(x2)
+      1c:      	sw	x21, 0x24(x2)
+      20:      	sw	x22, 0x20(x2)
+      24:      	sw	x23, 0x1c(x2)
+      28:      	sw	x24, 0x18(x2)
+      2c:      	sw	x25, 0x14(x2)
+      30:      	sw	x26, 0x10(x2)
+      34:      	sw	x27, 0xc(x2)
+      38:      	lui	x10, 0x0
+      3c:      	mv	x10, x10
+      40:      	li	x11, 0x400
+      44:      	li	x12, 0x4
+      48:      	li	x13, 0x8
+      4c:      	li	x8, 0x400
+      50:      	auipc	x1, 0x0
+      54:      	jalr	x1 <main+0x50>
+      58:      	li	x10, 0x0
+      5c:      	li	x11, 0x3
+      60:      	li	x12, 0x1
+      64:      	lui	x6, 0x0
+      68:      	mv	x6, x6
+      6c:      	xr.mac	x28, x0, x12, x0
+      70:      	xr.repeat	0x1, x0, x11
+      74:      	sw	x28, 0x0(x6)
+      78:      	sw	x29, 0x4(x6)
+      7c:      	sw	x30, 0x8(x6)
+      80:      	sw	x31, 0xc(x6)
+      84:      	lui	x11, 0x0
+      88:      	mv	x11, x11
+      8c:      	lui	x12, 0x2
+      90:      	lui	x13, 0x10
+      94:      	addi	x12, x12, 0x493
+      98:      	addi	x13, x13, -0x1
+      9c:      	mul	x14, x10, x12
+      a0:      	srli	x14, x14, 0x10
+      a4:      	sub	x15, x10, x14
+      a8:      	slli	x15, x15, 0x10
+      ac:      	srli	x15, x15, 0x11
+      b0:      	add	x14, x15, x14
+      b4:      	slli	x14, x14, 0x10
+      b8:      	srli	x14, x14, 0x12
+      bc:      	slli	x15, x14, 0x3
+      c0:      	add	x14, x10, x14
+      c4:      	addi	x10, x10, 0x1
+      c8:      	sub	x14, x14, x15
+      cc:      	and	x14, x14, x13
+      d0:      	addi	x14, x14, -0x3
+      d4:      	sw	x14, 0x0(x11)
+      d8:      	addi	x11, x11, 0x4
+      dc:      	bne	x10, x8, 0x9c <main+0x9c>
+      e0:      	li	x10, 0x0
+      e4:      	lui	x11, 0x0
+      e8:      	mv	x11, x11
+      ec:      	li	x12, -0x2
+      f0:      	lui	x13, 0xccccd
+      f4:      	lui	x14, 0x1
+      f8:      	addi	x13, x13, -0x333
+      fc:      	add	x14, x11, x14
+     100:      	mulhu	x15, x10, x13
+     104:      	addi	x10, x10, 0x1
+     108:      	srli	x16, x15, 0x2
+     10c:      	andi	x15, x15, -0x4
+     110:      	add	x15, x15, x16
+     114:      	sub	x15, x12, x15
+     118:      	sw	x15, 0x0(x11)
+     11c:      	addi	x11, x11, 0x4
+     120:      	addi	x12, x12, 0x1
+     124:      	bne	x11, x14, 0x100 <main+0x100>
+     128:      	lui	x10, 0x0
+     12c:      	mv	x10, x10
+     130:      	lui	x13, 0x1
+     134:      	li	x11, -0x1
+     138:      	li	x12, 0x1
+     13c:      	lui	x14, 0xccccd
+     140:      	lui	x15, 0x2
+     144:      	add	x13, x10, x13
+     148:      	addi	x14, x14, -0x333
+     14c:      	add	x15, x10, x15
+     150:      	mulhu	x16, x12, x14
+     154:      	srli	x17, x16, 0x2
+     158:      	andi	x16, x16, -0x4
+     15c:      	add	x16, x16, x17
+     160:      	sub	x16, x11, x16
+     164:      	sw	x16, 0x0(x13)
+     168:      	addi	x13, x13, 0x4
+     16c:      	addi	x11, x11, 0x1
+     170:      	addi	x12, x12, 0x1
+     174:      	bne	x13, x15, 0x150 <main+0x150>
+     178:      	li	x11, 0x0
+     17c:      	lui	x13, 0x2
+     180:      	li	x12, 0x2
+     184:      	lui	x14, 0xccccd
+     188:      	lui	x15, 0x3
+     18c:      	add	x13, x10, x13
+     190:      	addi	x14, x14, -0x333
+     194:      	add	x15, x10, x15
+     198:      	mulhu	x16, x12, x14
+     19c:      	srli	x17, x16, 0x2
+     1a0:      	andi	x16, x16, -0x4
+     1a4:      	add	x16, x16, x17
+     1a8:      	sub	x16, x11, x16
+     1ac:      	addi	x11, x11, 0x1
+     1b0:      	sw	x16, 0x0(x13)
+     1b4:      	addi	x13, x13, 0x4
+     1b8:      	addi	x12, x12, 0x1
+     1bc:      	bne	x13, x15, 0x198 <main+0x198>
+     1c0:      	lui	x13, 0x3
+     1c4:      	li	x11, 0x1
+     1c8:      	li	x12, 0x3
+     1cc:      	lui	x14, 0xccccd
+     1d0:      	lui	x15, 0x4
+     1d4:      	add	x13, x10, x13
+     1d8:      	addi	x14, x14, -0x333
+     1dc:      	add	x15, x10, x15
+     1e0:      	mulhu	x16, x12, x14
+     1e4:      	srli	x17, x16, 0x2
+     1e8:      	andi	x16, x16, -0x4
+     1ec:      	add	x16, x16, x17
+     1f0:      	sub	x16, x11, x16
+     1f4:      	sw	x16, 0x0(x13)
+     1f8:      	addi	x13, x13, 0x4
+     1fc:      	addi	x11, x11, 0x1
+     200:      	addi	x12, x12, 0x1
+     204:      	bne	x13, x15, 0x1e0 <main+0x1e0>
+     208:      	li	x11, 0x0
+     20c:      	lui	x13, 0x10013
+     210:      	lui	x12, 0x0
+     214:      	mv	x12, x12
+     218:      	sw	x0, 0x0(x13)
+     21c:      	li	x13, 0x7
+     220:      	li	x14, 0x4
+     224:      	lui	x15, 0x1
+     228:      	add	x15, x12, x15
+     22c:      	lw	x24, 0x0(x10)
+     230:      	xr.repeat	0x1, x14, x13
+     234:      	lw	x16, 0x0(x12)
+     238:      	xr.repeat	0x1, x14, x13
+     23c:      	addi	x12, x12, 0x20
+     240:      	xr.mac	x11, x16, x24, x11
+     244:      	xr.repeat	0x6, x0, x13
+     248:      	addi	x10, x10, 0x20
+     24c:      	bne	x12, x15, 0x22c <main+0x22c>
+     250:      	li	x12, 0x0
+     254:      	lui	x15, 0x0
+     258:      	lui	x10, 0x0
+     25c:      	mv	x10, x10
+     260:      	lui	x16, 0x1
+     264:      	lui	x13, 0x0
+     268:      	mv	x13, x13
+     26c:      	li	x14, 0x7
+     270:      	sw	x11, 0x0(x15)
+     274:      	li	x11, 0x4
+     278:      	add	x15, x10, x16
+     27c:      	add	x5, x13, x16
+     280:      	lw	x24, 0x0(x15)
+     284:      	xr.repeat	0x1, x11, x14
+     288:      	lw	x16, 0x0(x13)
+     28c:      	xr.repeat	0x1, x11, x14
+     290:      	addi	x13, x13, 0x20
+     294:      	xr.mac	x12, x16, x24, x12
+     298:      	xr.repeat	0x6, x0, x14
+     29c:      	addi	x15, x15, 0x20
+     2a0:      	bne	x13, x5, 0x280 <main+0x280>
+     2a4:      	li	x11, 0x0
+     2a8:      	sw	x12, 0x4(x6)
+     2ac:      	lui	x15, 0x2
+     2b0:      	lui	x12, 0x0
+     2b4:      	mv	x12, x12
+     2b8:      	li	x13, 0x7
+     2bc:      	li	x14, 0x4
+     2c0:      	lui	x16, 0x1
+     2c4:      	add	x15, x10, x15
+     2c8:      	add	x5, x12, x16
+     2cc:      	lw	x24, 0x0(x15)
+     2d0:      	xr.repeat	0x1, x14, x13
+     2d4:      	lw	x16, 0x0(x12)
+     2d8:      	xr.repeat	0x1, x14, x13
+     2dc:      	addi	x12, x12, 0x20
+     2e0:      	xr.mac	x11, x16, x24, x11
+     2e4:      	xr.repeat	0x6, x0, x13
+     2e8:      	addi	x15, x15, 0x20
+     2ec:      	bne	x12, x5, 0x2cc <main+0x2cc>
+     2f0:      	li	x12, 0x0
+     2f4:      	sw	x11, 0x8(x6)
+     2f8:      	lui	x15, 0x3
+     2fc:      	lui	x11, 0x0
+     300:      	mv	x11, x11
+     304:      	li	x13, 0x7
+     308:      	li	x14, 0x4
+     30c:      	add	x10, x10, x15
+     310:      	lui	x15, 0x1
+     314:      	add	x15, x11, x15
+     318:      	lw	x24, 0x0(x10)
+     31c:      	xr.repeat	0x1, x14, x13
+     320:      	lw	x16, 0x0(x11)
+     324:      	xr.repeat	0x1, x14, x13
+     328:      	addi	x11, x11, 0x20
+     32c:      	xr.mac	x12, x16, x24, x12
+     330:      	xr.repeat	0x6, x0, x13
+     334:      	addi	x10, x10, 0x20
+     338:      	bne	x11, x15, 0x318 <main+0x318>
+     33c:      	sw	x12, 0xc(x6)
+     340:      	lui	x10, 0x10013
+     344:      	li	x8, 0x1
+     348:      	sw	x8, 0x0(x10)
+     34c:      	lw	x12, 0x0(x6)
+     350:      	lui	x9, 0x0
+     354:      	mv	x9, x9
+     358:      	mv	x10, x9
+     35c:      	li	x11, 0x0
+     360:      	mv	x18, x6
+     364:      	auipc	x1, 0x0
+     368:      	jalr	x1 <main+0x364>
+     36c:      	lw	x12, 0x4(x18)
+     370:      	li	x11, 0x1
+     374:      	mv	x10, x9
+     378:      	auipc	x1, 0x0
+     37c:      	jalr	x1 <main+0x378>
+     380:      	lw	x12, 0x8(x18)
+     384:      	li	x11, 0x2
+     388:      	mv	x10, x9
+     38c:      	auipc	x1, 0x0
+     390:      	jalr	x1 <main+0x38c>
+     394:      	lw	x12, 0xc(x18)
+     398:      	li	x11, 0x3
+     39c:      	mv	x10, x9
+     3a0:      	auipc	x1, 0x0
+     3a4:      	jalr	x1 <main+0x3a0>
+     3a8:      	lui	x10, 0x811ca
+     3ac:      	lw	x11, 0x0(x18)
+     3b0:      	lw	x12, 0x4(x18)
+     3b4:      	lw	x13, 0x8(x18)
+     3b8:      	lw	x14, 0xc(x18)
+     3bc:      	addi	x10, x10, -0x23b
+     3c0:      	xor	x10, x11, x10
+     3c4:      	lui	x11, 0x1000
+     3c8:      	addi	x11, x11, 0x193
+     3cc:      	mul	x10, x10, x11
+     3d0:      	xor	x10, x10, x12
+     3d4:      	mul	x10, x10, x11
+     3d8:      	xor	x10, x10, x13
+     3dc:      	mul	x10, x10, x11
+     3e0:      	xor	x10, x10, x14
+     3e4:      	mul	x9, x10, x11
+     3e8:      	lui	x10, 0x0
+     3ec:      	mv	x10, x10
+     3f0:      	lui	x11, 0x0
+     3f4:      	mv	x11, x11
+     3f8:      	mv	x12, x9
+     3fc:      	auipc	x1, 0x0
+     400:      	jalr	x1 <main+0x3fc>
+     404:      	lui	x13, 0xfc15e
+     408:      	addi	x13, x13, 0x204
+     40c:      	bne	x9, x13, 0x40c <main+0x40c>
+     410:      	lui	x10, 0x0
+     414:      	mv	x10, x10
+     418:      	lui	x11, 0x0
+     41c:      	mv	x11, x11
+     420:      	auipc	x1, 0x0
+     424:      	jalr	x1 <main+0x420>
+     428:      	li	x8, 0x0
+     42c:      	j	0x42c <main+0x42c>
+     430:      	lui	x10, 0x0
+     434:      	mv	x10, x10
+     438:      	lui	x11, 0x0
+     43c:      	mv	x11, x11
+     440:      	mv	x12, x9
+     444:      	auipc	x1, 0x0
+     448:      	jalr	x1 <main+0x444>
+     44c:      	mv	x10, x8
+     450:      	lw	x1, 0x3c(x2)
+     454:      	lw	x8, 0x38(x2)
+     458:      	lw	x9, 0x34(x2)
+     45c:      	lw	x18, 0x30(x2)
+     460:      	lw	x19, 0x2c(x2)
+     464:      	lw	x20, 0x28(x2)
+     468:      	lw	x21, 0x24(x2)
+     46c:      	lw	x22, 0x20(x2)
+     470:      	lw	x23, 0x1c(x2)
+     474:      	lw	x24, 0x18(x2)
+     478:      	lw	x25, 0x14(x2)
+     47c:      	lw	x26, 0x10(x2)
+     480:      	lw	x27, 0xc(x2)
+     484:      	addi	x2, x2, 0x40
+     488:      	ret
