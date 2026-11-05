@@ -260,7 +260,7 @@ bool RISCVTargetLowering::lowerInterleavedLoad(
   assert(Indices.size() == Shuffles.size());
   assert(GapMask.getBitWidth() == Factor);
 
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions())
+  if (Subtarget.hasXRepeatVectors())
     return lowerXRepeatInterleavedLoad(Load, Mask, Shuffles, Indices, Factor);
 
   // We only support cases where the skipped fields are the trailing ones.

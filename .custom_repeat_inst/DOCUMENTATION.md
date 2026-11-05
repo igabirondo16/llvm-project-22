@@ -16,9 +16,11 @@ For a visual overview (pipeline diagram, register blocks, worked example), open
 | 5 — `<4 x i32>` blocks; the compiler picks 4 or 8 | `d5087d6b74df` | committed |
 | 6 — Strided loads (`lw` + REPEAT with any stride) | `7775c26197b3` | committed (one commit with Phase 7) |
 | 7 — gepdot: splat cost, keep small loops rolled for the vectorizer | `7775c26197b3` | committed (one commit with Phase 6) |
+| 8 — `xrepeatint`: frozen copy of XRepeat; `xrepeat` keeps evolving | — | not committed yet |
 
 All code is under `llvm/lib/Target/RISCV/` unless another path is given. Every code-generation
-change is guarded by `hasVendorXRepeat() && !hasVInstructions()`: if the V extension is also
+change is guarded by `hasXRepeatVectors()` (XRepeat or XRepeatInt, and no V extension; before
+Phase 8 it was spelled `hasVendorXRepeat() && !hasVInstructions()`): if the V extension is also
 enabled, fixed vectors keep going to RVV as before, and nothing changes for any other target.
 
 ---
@@ -730,6 +732,43 @@ estimate is right for that order: forcing VF 8 does spill. The hand version inte
    `VPlanAnalysis` change).
 
 Expected result if all three were done: about the hand version's 11.4k steps.
+
+## Phase 8 — `xrepeatint`: a frozen copy, so `xrepeat` can keep evolving
+
+**Goal.** Keep improving MAC/REPEAT support without losing what Phases 0–7 built. There are now two
+extensions with the same instructions (`xr.mac`, `xr.repeat`) and, for now, exactly the same code
+generation:
+
+| `-march` | LLVM feature | Role |
+|---|---|---|
+| `rv32im_xrepeat` | `XRepeat` | the version under development; new work goes here |
+| `rv32im_xrepeatint` | `XRepeatInt` | frozen: what XRepeat did at the end of Phase 7 |
+
+**Why not `xrepeat2` or `xrepeat_int`.** In an ISA string, digits at the end of a name are its
+version (`xrepeat2` parses as `xrepeat` version 2), and `_` separates extensions
+(`xrepeat_int` would be `xrepeat` + `int`). So the name must be letters only, or end in one.
+
+**How the code is shared, not copied.**
+- `RISCVFeatures.td`: `FeatureVendorXRepeatInt` / `HasVendorXRepeatInt`, plus
+  `HasVendorXRepeatAny` (*XRepeat or XRepeatInt*, an `any_of` assembler predicate).
+- `RISCVInstrInfoXRepeat.td`: the instructions, pseudos and patterns use `HasVendorXRepeatAny`.
+- `RISCVSubtarget.h`: `hasXRepeatVectors()` = (XRepeat or XRepeatInt) and no V. It replaces the
+  eight `hasVendorXRepeat() && !hasVInstructions()` checks in `RISCVISelLowering.cpp`,
+  `RISCVInterleavedAccess.cpp` and the TTI helper of the same name.
+- `RISCVDisassembler.cpp`: the XRepeat decoder table is enabled by either feature.
+- `RISCVISAInfo.cpp`: `xrepeatint` is rv32-only, and `xrepeat` + `xrepeatint` together is an error
+  (they share opcodes, so a disassembler could not tell them apart).
+
+**Rule for future work.** Anything only the developed version should get is guarded by
+`HasVendorXRepeat` in `.td` and `Subtarget.hasVendorXRepeat()` in C++. Shared code stays under
+`HasVendorXRepeatAny` / `hasXRepeatVectors()`. That keeps `xrepeatint`'s output fixed.
+
+**Tests.** Every XRepeat RUN line has an `+xrepeatint` twin that must pass the same checks
+(CodeGen, MC, LoopVectorize, SLP, LoopUnroll, CostModel). New unit tests check the rv64 error and
+the incompatibility. Validation: all 3270 RISC-V lit tests and the 641 TargetParser unit tests
+pass. `compare_asm.sh` regenerates byte-identical code (only the `.ident` commit hash changes),
+and every benchmark compiled with `xrepeatint` is identical to `xrepeat` except for the arch
+attribute lines.
 
 ## Installing from scratch
 

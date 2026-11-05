@@ -681,6 +681,17 @@ TEST(ParseArchString, RejectsConflictingExtensions) {
               "'xwchc' and 'zcb' extensions are incompatible");
   }
 
+  for (StringRef Input : {"rv64i_xrepeat", "rv64i_xrepeatint"}) {
+    StringRef Ext = Input.drop_front(strlen("rv64i_"));
+    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+              ("'" + Ext + "' is only supported for 'rv32'").str());
+  }
+
+  for (StringRef Input : {"rv32i_xrepeat_xrepeatint"}) {
+    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+              "'xrepeat' and 'xrepeatint' extensions are incompatible");
+  }
+
   for (StringRef Input : {"rv64i_zilsd"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
               "'zilsd' is only supported for 'rv32'");
@@ -1352,6 +1363,7 @@ R"(All available -march extensions for RISC-V
     xqcisls              0.2
     xqcisync             0.3
     xrepeat              1.0
+    xrepeatint           1.0
     xsfcease             1.0
     xsfmm128t            0.6
     xsfmm16t             0.6

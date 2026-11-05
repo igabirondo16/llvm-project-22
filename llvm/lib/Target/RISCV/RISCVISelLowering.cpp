@@ -302,7 +302,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
 
   // XRepeat: <8 x i32> lives in 8 consecutive GPRs (x8/x16/x24 + 0..7), and
   // <4 x i32> in 4 (x8/x12/.../x28 + 0..3).
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions()) {
+  if (Subtarget.hasXRepeatVectors()) {
     addRegisterClass(MVT::v8i32, &RISCV::XRVecRegClass);
     addRegisterClass(MVT::v4i32, &RISCV::XRVec4RegClass);
   }
@@ -805,7 +805,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
 
   setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
 
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions()) {
+  if (Subtarget.hasXRepeatVectors()) {
     for (MVT XRVT : {MVT::v8i32, MVT::v4i32}) {
       // XRepeat: <8 x i32> and <4 x i32> loads, stores and copies are native,
       // and add, sub and mul are selected to MAC + REPEAT. Every other
@@ -6785,7 +6785,7 @@ bool RISCVTargetLowering::isShuffleMaskLegal(ArrayRef<int> M, EVT VT) const {
     return false;
 
   // XRepeat has no shuffles; they are expanded element by element.
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions())
+  if (Subtarget.hasXRepeatVectors())
     return false;
 
   // Support splats for any type. These should type legalize well.
@@ -7906,7 +7906,7 @@ bool RISCVTargetLowering::shouldReassociateReduction(unsigned RedOpc,
                                                      EVT VT) const {
   // XRepeat: keep separate reductions apart (see combineXRepeatVecReduceAdd),
   // or the two combines would undo each other forever.
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions() &&
+  if (Subtarget.hasXRepeatVectors() &&
       isXRepeatVT(VT))
     return false;
   return TargetLowering::shouldReassociateReduction(RedOpc, VT);
@@ -8035,7 +8035,7 @@ static SDValue lowerXRepeatOperation(SDValue Op, SelectionDAG &DAG) {
 
 SDValue RISCVTargetLowering::LowerOperation(SDValue Op,
                                             SelectionDAG &DAG) const {
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions() &&
+  if (Subtarget.hasXRepeatVectors() &&
       (isXRepeatVT(Op.getValueType()) ||
        ((Op.getOpcode() == ISD::VECREDUCE_ADD ||
          Op.getOpcode() == ISD::EXTRACT_VECTOR_ELT) &&
@@ -21201,7 +21201,7 @@ SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
     return true;
   };
 
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions()) {
+  if (Subtarget.hasXRepeatVectors()) {
     if (N->getOpcode() == ISD::VECREDUCE_ADD)
       if (SDValue V = combineXRepeatVecReduceAdd(N, DAG))
         return V;
@@ -26020,7 +26020,7 @@ bool RISCVTargetLowering::isLegalStridedLoadStore(EVT DataType,
                                                   Align Alignment) const {
   // XRepeat: a strided load is LW + REPEAT with the stride in a register, and
   // a strided store is one SW per element (see lowerXRepeatOperation).
-  if (Subtarget.hasVendorXRepeat() && !Subtarget.hasVInstructions())
+  if (Subtarget.hasXRepeatVectors())
     return (DataType == MVT::v8i32 || DataType == MVT::v4i32) &&
            Alignment >= Align(4);
 

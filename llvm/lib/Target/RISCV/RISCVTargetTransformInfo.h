@@ -36,12 +36,10 @@ class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
 
   const RISCVSubtarget *getST() const { return ST; }
 
-  /// True when XRepeat provides the fixed-length vectors: blocks of GPRs
-  /// instead of RVV registers, either three <8 x i32> (x8..x15, x16..x23,
-  /// x24..x31) or six <4 x i32> (x8..x11, x12..x15, ..., x28..x31).
-  bool hasXRepeatVectors() const {
-    return ST->hasVendorXRepeat() && !ST->hasVInstructions();
-  }
+  /// True when XRepeat or XRepeatInt provides the fixed-length vectors: blocks
+  /// of GPRs instead of RVV registers, either three <8 x i32> (x8..x15,
+  /// x16..x23, x24..x31) or six <4 x i32> (x8..x11, x12..x15, ..., x28..x31).
+  bool hasXRepeatVectors() const { return ST->hasXRepeatVectors(); }
 
   /// True for fixed vectors when XRepeat keeps them in GPR blocks instead of
   /// RVV registers. The RVV cost model doesn't apply to them, so the hooks

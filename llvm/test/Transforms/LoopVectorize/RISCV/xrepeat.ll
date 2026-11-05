@@ -1,5 +1,7 @@
 ; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes=loop-vectorize -S < %s \
 ; RUN:   | FileCheck %s
+; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeatint -passes=loop-vectorize -S < %s \
+; RUN:   | FileCheck %s
 
 ; With XRepeat (and no V), loops are vectorized with VF = 8 (one <8 x i32>
 ; block) or VF = 4 (one <4 x i32> block), whichever is cheaper, and no

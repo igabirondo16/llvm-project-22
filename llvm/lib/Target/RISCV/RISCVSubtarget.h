@@ -292,6 +292,12 @@ public:
   // XRay support - require D and C extensions.
   bool isXRaySupported() const override { return hasStdExtD() && hasStdExtC(); }
 
+  // XRepeat or XRepeatInt provide the fixed-length vectors (<8 x i32> and
+  // <4 x i32> in blocks of GPRs). RVV takes precedence when both are present.
+  bool hasXRepeatVectors() const {
+    return (HasVendorXRepeat || HasVendorXRepeatInt) && !hasVInstructions();
+  }
+
   // Vector codegen related methods.
   bool hasVInstructions() const { return HasStdExtZve32x; }
   bool hasVInstructionsI64() const { return HasStdExtZve64x; }

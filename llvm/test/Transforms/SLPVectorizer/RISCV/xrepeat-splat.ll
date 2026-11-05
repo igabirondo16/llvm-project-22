@@ -1,4 +1,5 @@
 ; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes=slp-vectorizer -S < %s | FileCheck %s
+; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeatint -passes=slp-vectorizer -S < %s | FileCheck %s
 
 ; SLP asks for the cost of a splat of %s as a single-source permute with an
 ; all-zero mask. XRepeat must price it as a broadcast (a valid, cheap cost),

@@ -212,6 +212,7 @@
 ; CHECK-NEXT:   xqcisls                          - 'Xqcisls' (Qualcomm uC Scaled Load Store Extension).
 ; CHECK-NEXT:   xqcisync                         - 'Xqcisync' (Qualcomm uC Sync Delay Extension).
 ; CHECK-NEXT:   xrepeat                          - 'XRepeat' (repeat_rv Repeat and Multiply-Accumulate).
+; CHECK-NEXT:   xrepeatint                       - 'XRepeatInt' (repeat_rv Repeat and Multiply-Accumulate, frozen original version).
 ; CHECK-NEXT:   xsfcease                         - 'XSfcease' (SiFive sf.cease Instruction).
 ; CHECK-NEXT:   xsfmm128t                        - 'XSfmm128t' (TE=128 configuration).
 ; CHECK-NEXT:   xsfmm16t                         - 'XSfmm16t' (TE=16 configuration).

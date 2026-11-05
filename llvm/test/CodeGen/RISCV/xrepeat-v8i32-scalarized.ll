@@ -1,6 +1,10 @@
 ; RUN: llc -mtriple=riscv32 -mattr=+m,+xrepeat -verify-machineinstrs < %s \
 ; RUN:   | FileCheck %s
+; RUN: llc -mtriple=riscv32 -mattr=+m,+xrepeatint -verify-machineinstrs < %s \
+; RUN:   | FileCheck %s
 ; RUN: llc -mtriple=riscv32 -mattr=+xrepeat -verify-machineinstrs -O0 < %s \
+; RUN:   | FileCheck %s
+; RUN: llc -mtriple=riscv32 -mattr=+xrepeatint -verify-machineinstrs -O0 < %s \
 ; RUN:   | FileCheck %s
 
 ; <8 x i32> operations XRepeat has no instruction for. They must be expanded

@@ -12,6 +12,11 @@
 //                incrementing the register fields selected by `mask` by one
 //                on every step (R-type, custom-2).
 //
+// XRepeatInt is a frozen copy of XRepeat (see RISCVFeatures.td): everything
+// here is under HasVendorXRepeatAny so both get it. Additions that only the
+// developed XRepeat gets go under HasVendorXRepeat (and in C++ behind
+// hasVendorXRepeat()), which keeps XRepeatInt's output unchanged.
+//
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
@@ -36,7 +41,7 @@ class XRInstRepeat
 // Instructions
 //===----------------------------------------------------------------------===//
 
-let Predicates = [HasVendorXRepeat, IsRV32], DecoderNamespace = "XRepeat" in {
+let Predicates = [HasVendorXRepeatAny, IsRV32], DecoderNamespace = "XRepeat" in {
 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
 def XR_MAC : RVInstR4<0b00, 0b000, OPC_CUSTOM_0, (outs GPR:$rd),
@@ -49,7 +54,7 @@ def XR_MAC : RVInstR4<0b00, 0b000, OPC_CUSTOM_0, (outs GPR:$rd),
 let hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
 def XR_REPEAT : XRInstRepeat, Sched<[]>;
 
-} // Predicates = [HasVendorXRepeat, IsRV32], DecoderNamespace = "XRepeat"
+} // Predicates = [HasVendorXRepeatAny, IsRV32], DecoderNamespace = "XRepeat"
 
 //===----------------------------------------------------------------------===//
 // Code generation: <8 x i32> in XRVec and <4 x i32> in XRVec4 registers
@@ -94,7 +99,7 @@ defvar XRStride4 = (ADDI (XLenVT X0), 4);
 defvar XROne = (ADDI (XLenVT X0), 1);
 defvar XRMinusOne = (ADDI (XLenVT X0), -1);
 
-let Predicates = [HasVendorXRepeat, IsRV32] in
+let Predicates = [HasVendorXRepeatAny, IsRV32] in
 foreach V = [XRV8, XRV4] in {
 defvar W = V.Width;
 
@@ -252,7 +257,7 @@ foreach I = !range(W) in {
 
 // A <4 x i32> half of an <8 x i32> is a sub-register of the block, so moving
 // halves between the two widths needs no instructions.
-let Predicates = [HasVendorXRepeat, IsRV32] in {
+let Predicates = [HasVendorXRepeatAny, IsRV32] in {
 foreach Half = [0, 1] in {
   defvar SubReg = !cast<SubRegIndex>("sub_xr" # !if(Half, "hi", "lo"));
   defvar Idx = !mul(4, Half);
@@ -264,4 +269,4 @@ foreach Half = [0, 1] in {
 }
 def : Pat<(v8i32 (concat_vectors (v4i32 XRVec4:$lo), (v4i32 XRVec4:$hi))),
           (REG_SEQUENCE XRVec, XRVec4:$lo, sub_xrlo, XRVec4:$hi, sub_xrhi)>;
-} // Predicates = [HasVendorXRepeat, IsRV32]
+} // Predicates = [HasVendorXRepeatAny, IsRV32]
