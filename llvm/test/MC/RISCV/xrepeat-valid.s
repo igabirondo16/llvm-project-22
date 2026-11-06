@@ -184,31 +184,31 @@ xr.srai f1, f1, 3
 # mask 1, stride a5, count 7
 xr.repeat 1, a5, 7
 # CHECK-INSTR: xr.repeat 1, a5, 7
-# CHECK-ENCODING: [0x5b,0x80,0xf3,0x10]
+# CHECK-ENCODING: [0x5b,0x80,0x77,0x10]
 # CHECK-NO-EXT: instruction requires the following: 'XRepeat' (repeat_rv Repeat and Multiply-Accumulate){{$}}
 
 # mask 6, stride zero, count 7
 xr.repeat 6, zero, 7
 # CHECK-INSTR: xr.repeat 6, zero, 7
-# CHECK-ENCODING: [0x5b,0x80,0x03,0x60]
+# CHECK-ENCODING: [0x5b,0x00,0x70,0x60]
 # CHECK-NO-EXT: instruction requires the following: 'XRepeat' (repeat_rv Repeat and Multiply-Accumulate){{$}}
 
 # mask 11, stride zero, count 15
 xr.repeat 11, zero, 15
 # CHECK-INSTR: xr.repeat 11, zero, 15
-# CHECK-ENCODING: [0x5b,0x80,0x07,0xb0]
+# CHECK-ENCODING: [0x5b,0x00,0xf0,0xb0]
 # CHECK-NO-EXT: instruction requires the following: 'XRepeat' (repeat_rv Repeat and Multiply-Accumulate){{$}}
 
 # mask 15, stride t6, count 0
 xr.repeat 15, t6, 0
 # CHECK-INSTR: xr.repeat 15, t6, 0
-# CHECK-ENCODING: [0x5b,0x00,0xf0,0xf1]
+# CHECK-ENCODING: [0x5b,0x80,0x0f,0xf0]
 # CHECK-NO-EXT: instruction requires the following: 'XRepeat' (repeat_rv Repeat and Multiply-Accumulate){{$}}
 
 # mask 0, stride a0, count 3
 xr.repeat 0, a0, 3
 # CHECK-INSTR: xr.repeat 0, a0, 3
-# CHECK-ENCODING: [0x5b,0x80,0xa1,0x00]
+# CHECK-ENCODING: [0x5b,0x00,0x35,0x00]
 # CHECK-NO-EXT: instruction requires the following: 'XRepeat' (repeat_rv Repeat and Multiply-Accumulate){{$}}
 
 # xrepeat implies F.

@@ -800,7 +800,7 @@ the assembler and disassembler the new instructions; code generation for them co
   | `xr.mv.vx fd, rs1` / `xr.mv.xv rd, fs1` | custom-1, funct3 010 / 011 | x → VRF / VRF → x |
   | `xr.lw fd, imm(rs1)` / `xr.sw fs2, imm(rs1)` | custom-1, funct3 100 (I) / 101 (S) | VRF load / store |
   | `xr.addi/slti/sltiu/xori/ori/andi fd, fs1, imm`, `xr.slli/srli/srai fd, fs1, shamt` | custom-3, funct3 as OP-IMM (`srai`: imm bit 10) | VRF integer ALU with immediate |
-  | `xr.repeat mask, rs2, count` | custom-2, mask in bits 31:28, **rs2 = stride register, rs1 field = literal count 0..15** | repeat the previous instruction `count` more times |
+  | `xr.repeat mask, rs1, count` | custom-2, mask in bits 31:28, **rs1 = stride register, rs2 field = literal count 0..15** | repeat the previous instruction `count` more times |
 
   The VRF operands print as f registers in ABI form (`f8` → `fs0`, `f16` → `fa6`, …).
 - `xrepeatint` keeps the original `xr.mac` (custom-0, x registers) and
@@ -1084,7 +1084,7 @@ Nothing in LLVM changed in this phase.
 - The f registers are the VRF: 32 words with no hardwired zero, holding integers and floats.
 - `xr.<alu>`/`xr.mac`/`xr.mv.vx`/`xr.mv.xv`/`xr.lw`/`xr.sw` (custom-1) and `xr.<alu>i` (custom-3)
   follow `ENCODINGS.md`, with the `xr.*` names.
-- `xr.repeat`: mask in bits 31:28, `stride = x[rs2]` (signed), count = the rs1 field as a literal.
+- `xr.repeat`: mask in bits 31:28, `stride = x[rs1]` (signed), count = the rs2 field as a literal (bits 23:20).
   On extra step k, a walking register is the base register with its low bits replaced by k (a 4-,
   8- or 16-wide window from the count), as `windowed_reg_id` does. The address of a repeated load
   or store is `x[rs1] + imm + k·stride`. A load's destination always walks; a store's value walks
@@ -1702,13 +1702,121 @@ build-22/bin/llvm-lit -v llvm/test/MC/RISCV/xrepeat*.s llvm/test/CodeGen/RISCV/x
 grep -c xr.repeat .custom_repeat_inst/asm_compare/mlp/base_xrepeat.dis   # > 0
 ```
 
-Use it with `--target=riscv32-unknown-elf` and `-march=rv32im_xrepeat` (the VRF core, still being
-developed; see Phase 9) or `-march=rv32im_xrepeatint` (the original GPR core, which the
-auto-vectorizer fully supports). Without either in `-march`, the compiler behaves like the
-original, unmodified LLVM 22.
+Use it with `--target=riscv32-unknown-elf` and `-march=rv32im_xrepeat` (the VRF core, Phases 9–18)
+or `-march=rv32im_xrepeatint` (the original GPR core, frozen at Phase 8). Without either in
+`-march`, the compiler behaves like the original, unmodified LLVM 22. See the next section for a
+worked example.
 
 After editing any `.td` or `.cpp` file, rebuild `clang` too, not only `llc`. `clang` contains
 its own copy of the back end, and a stale `clang` once produced a false test failure.
+
+## Compiling your own code for XRepeat
+
+Write plain C; there are no intrinsics or pragmas. The vectorizers decide what goes into
+REPEAT bursts. A small example, `dot.c`:
+
+```c
+#include <stdio.h>
+
+#define N 256
+int a[N], b[N];
+float x[N], y[N];
+
+// y = alpha * x + y  (float: flw / fmadd.s / fsw + REPEAT)
+void saxpy(float alpha) {
+    for (int i = 0; i < N; i++) y[i] = alpha * x[i] + y[i];
+}
+
+// integer dot product (one xr.mac + REPEAT per 8 elements)
+int dot(void) {
+    int s = 0;
+    for (int i = 0; i < N; i++) s += a[i] * b[i];
+    return s;
+}
+
+int main(void) {
+    for (int i = 0; i < N; i++) { a[i] = i % 7 - 3; b[i] = i % 5; x[i] = i * 0.5f; y[i] = 1.0f; }
+    saxpy(2.0f);
+    printf("dot = %d, y[10] = %d\n", dot(), (int) y[10]);
+    return 0;
+}
+```
+
+### Compile
+
+From the repo root, with `B=build-22/bin`:
+
+```bash
+# Assembly for the VRF core
+$B/clang --target=riscv32-unknown-elf -march=rv32im_xrepeat -mabi=ilp32 -O2 \
+    -ffreestanding -isystem .custom_repeat_inst/sim/sys -S dot.c -o dot.s
+
+# Object file, and its disassembly with the xr.* names
+$B/clang --target=riscv32-unknown-elf -march=rv32im_xrepeat -mabi=ilp32 -O2 \
+    -ffreestanding -isystem .custom_repeat_inst/sim/sys -c dot.c -o dot.o
+$B/llvm-objdump -d --mattr=+m,+f,+xrepeat dot.o
+```
+
+The loop in `saxpy` becomes:
+
+```
+    flw     ft0, 0(a1)  ; xr.repeat 1, a2, 7     # x[i..i+7]   (a2 = 4, the stride)
+    flw     fs8, 0(a0)  ; xr.repeat 1, a2, 7     # y[i..i+7]
+    fmadd.s fs8, fa5, ft0, fs8 ; xr.repeat 13, zero, 7   # y = alpha * x + y, alpha fixed in fa5
+    fsw     fs8, 0(a0)  ; xr.repeat 4, a2, 7     # store y[i..i+7]
+```
+
+The flags:
+
+| Flag | Why |
+|---|---|
+| `--target=riscv32-unknown-elf` | Bare-metal RV32. |
+| `-march=rv32im_xrepeat` | The VRF core. XRepeat implies F: vectors live in the f registers, and float code uses RV32F. Use `rv32im_xrepeatint` for the original GPR core. |
+| `-mabi=ilp32` | Without it, `xrepeat` (which implies F) makes clang choose `ilp32f`, the single-float ABI, and the object no longer links with code built for plain `rv32im`, such as `sim/rt.c`. If everything is built with F, `ilp32f` is fine. |
+| `-O2` (or `-O3`) | The loop and SLP vectorizers, and this extension's loop fusion, only run from `-O2`. At `-O1`/`-O0` the code stays scalar. |
+| `-ffreestanding -isystem .custom_repeat_inst/sim/sys` | There is no RISC-V libc on this machine. `sim/sys/stdio.h` only declares `printf`, which `sim/rt.c` implements for the emulator. |
+
+### See what was vectorized, and why
+
+```bash
+$B/clang ... -O2 -S dot.c -o /dev/null -Rpass=loop-vectorize -Rpass=slp-vectorizer \
+    -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize -Rpass=loop-fusion
+# dot.c:9:5:  remark: vectorized loop (vectorization width: 8, interleaved count: 1)
+# dot.c:15:5: remark: vectorized loop (vectorization width: 8, interleaved count: 1)
+```
+
+A loop the core can't do in one burst gets "the cost-model indicates that vectorization is not
+beneficial" or "Recipe with invalid costs". Examples are compares and selects, divisions,
+conversions, and `i8`/`i16` data; see the known gaps of Phases 12 and 16.
+
+### Run it on the emulator
+
+`sim/build.sh <core> <name> <src.c> <march> [flags]` compiles, links with `sim/rt.c` and
+`sim/link.ld`, and runs the program (output in `sim/out/`):
+
+```bash
+.custom_repeat_inst/sim/build.sh vrf dot_example dot.c rv32im_xrepeat
+# dot = -13, y[10] = 11
+# [sim] total: 9180 instructions, 10748 steps, 224 REPEATs
+
+.custom_repeat_inst/sim/build.sh vrf dot_ref dot.c rv32imf      # scalar reference
+# dot = -13, y[10] = 11
+# [sim] total: 12121 instructions, 12121 steps, 0 REPEATs
+```
+
+The core must match `-march`: `vrf` for `rv32im_xrepeat` (and for any F code), `int` for
+`rv32im_xrepeatint` and `rv32im`. A program can time a region by calling
+`bench_mark(0)` … `bench_mark(1)` from `base_mlp/bench.h`; the emulator then also prints the steps
+in that window.
+
+### Switches for experiments
+
+| Option | Effect |
+|---|---|
+| `-fno-vectorize -fno-slp-vectorize` | No vectorization: scalar code, even with XRepeat. |
+| `-mllvm -riscv-xrepeat-loop-fusion=false` | No fusion of loops that share a load before the vectorizers (Phase 18). |
+| `-mllvm -riscv-xrepeat-keep-small-loops=false` | Small constant-trip-count loops are fully unrolled as usual, instead of kept rolled for the vectorizer (Phase 7). |
+| `-mllvm -force-vector-width=8` (or 16) | Force a vectorization factor, ignoring the cost model. Only for experiments; it can spill. |
 
 ## How to rebuild and re-run everything
 

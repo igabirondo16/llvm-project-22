@@ -12,8 +12,9 @@
             hold integers too, plus
               custom-1  xr.<alu> / xr.mac / xr.mv.vx / xr.mv.xv / xr.lw / xr.sw
               custom-3  xr.<alu>i
-              custom-2  xr.repeat: mask = bits 31:28, stride = x[rs2],
-                        count = rs1 field read as a literal (0..15).
+              custom-2  xr.repeat: mask = bits 31:28, stride = x[rs1],
+                        count = rs2 field read as a literal (bits 23:20,
+                        0..15; bit 24 ignored).
             Windowing: a walking register on extra step k is the base register
             with its low bits replaced by k (4/8/16-wide window for
             count <= 3 / <= 7 / else). Loads always walk rd; stores walk the
@@ -625,11 +626,11 @@ class Sim:
             self.execute(p, *regs, off=(k * stride) & MASK32 if op == 0x03 else 0)
 
     def repeat_vrf(self, pc, i, p, rd, rs1, rs2, rs3):
-        if (i >> 7) & 31 or (i >> 12) & 7 or (i >> 25) & 7 or (i >> 19) & 1:
+        if (i >> 7) & 31 or (i >> 12) & 7 or (i >> 25) & 7 or (i >> 24) & 1:
             raise SimError(f"bad REPEAT {i:#010x} at {pc:#x}")
         mask = i >> 28
-        stride = self.x[(i >> 20) & 31]
-        count = (i >> 15) & 15
+        stride = self.x[(i >> 15) & 31]
+        count = (i >> 20) & 15
         kind = vrf_repeat_kind(p)
         if kind is None:
             raise SimError(f"REPEAT of ineligible instruction {p:#010x} at {pc:#x}")

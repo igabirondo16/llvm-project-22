@@ -20,9 +20,9 @@
 //   - xr.repeat mask, stride, count (custom-2): re-executes the previous
 //     instruction `count` more times. A walking field (mask bit set) gets the
 //     iteration number in the low bits of its register number, so a block of
-//     4/8/16 registers must start at a multiple of 4/8/16. rs2 holds the
+//     4/8/16 registers must start at a multiple of 4/8/16. rs1 holds the
 //     stride (bytes) of a repeated load/store; count (0..15) is a literal in
-//     the rs1 field.
+//     the rs2 field.
 //   Repeatable: lw/flw/xr.lw, sw/fsw/xr.sw, xr.mac, xr.<alu>, xr.<alu>i,
 //   fmadd.s, fadd.s, fsub.s, fmul.s.
 //
@@ -66,16 +66,18 @@ class XRIntInstRepeat
   let Inst{19-15} = rs1;
 }
 
-// XRepeat: rs2 = stride register, rs1 field = the literal count.
+// XRepeat: rs1 = stride register, rs2 field = the literal count (as the
+// REPEAT_INSN macro of rvtarget.h: .insn r 0x5B, 0, mask << 3, x0, stride,
+// x<count>). The core reads only the low 4 bits of the rs2 field; bit 24 is 0.
 class XRInstRepeat
-    : XRInstRepeatBase<(ins uimm4:$mask, GPR:$rs2, uimm4:$count),
-                       "$mask, $rs2, $count"> {
-  bits<5> rs2;
+    : XRInstRepeatBase<(ins uimm4:$mask, GPR:$rs1, uimm4:$count),
+                       "$mask, $rs1, $count"> {
+  bits<5> rs1;
   bits<4> count;
 
-  let Inst{24-20} = rs2;
-  let Inst{19} = 0;
-  let Inst{18-15} = count;
+  let Inst{24} = 0;
+  let Inst{23-20} = count;
+  let Inst{19-15} = rs1;
 }
 
 // XRepeat VRF integer ALU, register-register: op in funct7[3:0].

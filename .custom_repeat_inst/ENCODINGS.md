@@ -56,8 +56,8 @@ R-type layout:
 | Bits | Field | Meaning |
 |---|---|---|
 | `[31:25]` funct7 | `{mask[3:0], 3'b000}` | `mask[3:0]` in funct7`[3:0]` (funct7`[6:4]` reserved, 0) |
-| `[24:20]` rs2 | `stride_reg` | real register, holds the runtime **stride** value |
-| `[19:15]` rs1 | `x<count>` | **not** a register read — `count` is encoded as a literal register *number* (e.g. `x3`), reinterpreted by `decoder.sv`/the issue modules as a 4-bit immediate (`CORE_CLAIM_BITS'(instr.rs1)` is never read as a GPR for this instruction) |
+| `[24:20]` rs2 | `x<count>` | **not** a register read — `count` is encoded as a literal register *number* (e.g. `x3`), reinterpreted by `decoder.sv`/the issue modules as a 4-bit immediate (`CORE_CLAIM_BITS'(instr.rs2)`, bits `[23:20]`; bit 24 ignored) and never read as a GPR for this instruction |
+| `[19:15]` rs1 | `stride_reg` | real register, holds the runtime **stride** value |
 | `[14:12]` funct3 | `000` | unused |
 | `[11:7]` rd | `x0` | unused |
 | `[6:0]` opcode | `0x5B` | `custom-2` |
