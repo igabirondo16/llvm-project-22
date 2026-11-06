@@ -5,13 +5,15 @@ Usage: python3 asm_loops.py <asm_compare dir> <bench>...   (called by compare_as
 llc marks every loop header with a comment ("=>This Inner Loop Header: Depth=N" for innermost
 loops). An innermost loop's body runs from its header label to the last branch back to that
 label. The hand-written versions' MAC/REPEAT are `.insn` directives in the .s file; they are
-renamed xr.mac / xr.repeat here so all three versions read the same.
+renamed xr.mac / xr.repeat here so all versions read the same. Loads and stores count lw/flw
+and sw/fsw (base_vrf keeps its vectors in F registers); "xr.op" counts the VRF core's other
+vector instructions (xr.add, xr.addi, ..., fadd.s/fsub.s/fmul.s/fmadd.s followed by a REPEAT).
 """
 import re
 import sys
 from pathlib import Path
 
-VERSIONS = ["base_rv32im", "base_xrepeat", "hand"]
+VERSIONS = ["base_rv32im", "base_xrepeat", "base_vrf", "hand"]
 BRANCHES = ("beq", "bne", "blt", "bge", "bltu", "bgeu", "beqz", "bnez", "blez", "bgez",
             "bltz", "bgtz", "bgt", "ble", "bgtu", "bleu", "j")
 
@@ -79,14 +81,18 @@ def inner_loops(funcs):
 def stats(body):
     ops = [b.split()[0] for b in body]
     c = lambda *names: sum(o in names for o in ops)
-    return {"insns": len(ops), "mac": c("xr.mac"), "rep": c("xr.repeat"), "lw": c("lw"),
-            "sw": c("sw"), "mul": c("mul"), "add": c("add", "addi", "sub")}
+    # An instruction followed by a REPEAT, other than MAC and loads/stores.
+    xop = sum(1 for o, n in zip(ops, ops[1:] + [""]) if n == "xr.repeat" and
+              o not in ("xr.mac", "lw", "flw", "sw", "fsw"))
+    return {"insns": len(ops), "mac": c("xr.mac"), "rep": c("xr.repeat"), "xop": xop,
+            "lw": c("lw", "flw"), "sw": c("sw", "fsw"), "mul": c("mul"),
+            "add": c("add", "addi", "sub")}
 
 
 def main():
     out = Path(sys.argv[1])
     summary = []
-    hdr = f"{'bench':<10} {'version':<13} {'function':<26} {'loop':<10} {'insns':>5} {'xr.mac':>6} {'xr.rep':>6} {'lw':>4} {'sw':>4} {'mul':>4}"
+    hdr = f"{'bench':<10} {'version':<13} {'function':<26} {'loop':<10} {'insns':>5} {'xr.mac':>6} {'xr.op':>5} {'xr.rep':>6} {'lw':>4} {'sw':>4} {'mul':>4}"
     summary += [hdr, "-" * len(hdr)]
     for bench in sys.argv[2:]:
         txt = []
@@ -95,8 +101,8 @@ def main():
             txt.append(f"{'=' * 30} {bench} / {v}: {len(loops)} innermost loops {'=' * 30}\n")
             for fname, lab, body in loops:
                 s = stats(body)
-                summary.append(f"{bench:<10} {v:<13} {fname[:26]:<26} {lab:<10} {s['insns']:>5} {s['mac']:>6} {s['rep']:>6} {s['lw']:>4} {s['sw']:>4} {s['mul']:>4}")
-                txt.append(f"--- {fname} {lab}: {s['insns']} insns, {s['mac']} xr.mac, {s['rep']} xr.repeat, "
+                summary.append(f"{bench:<10} {v:<13} {fname[:26]:<26} {lab:<10} {s['insns']:>5} {s['mac']:>6} {s['xop']:>5} {s['rep']:>6} {s['lw']:>4} {s['sw']:>4} {s['mul']:>4}")
+                txt.append(f"--- {fname} {lab}: {s['insns']} insns, {s['mac']} xr.mac, {s['xop']} other repeated, {s['rep']} xr.repeat, "
                            f"{s['lw']} lw, {s['sw']} sw, {s['mul']} mul\n")
                 txt += [f"\t{b}\n" for b in body]
                 txt.append("\n")

@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RISCVTargetMachine.h"
+#include "RISCVInstrInfo.h"
 #include "MCTargetDesc/RISCVBaseInfo.h"
 #include "RISCV.h"
 #include "RISCVMachineFunctionInfo.h"
@@ -39,6 +40,16 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/IndVarSimplify.h"
+#include "llvm/Transforms/Scalar/LoopFuse.h"
+#include "llvm/Transforms/Scalar/LoopPassManager.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
 #include "llvm/Transforms/Vectorize/LoopIdiomVectorize.h"
 #include <optional>
 using namespace llvm;
@@ -283,6 +294,38 @@ bool RISCVTargetMachine::isNoopAddrSpaceCast(unsigned SrcAS,
   return true;
 }
 
+namespace {
+// XRepeat (VRF core): a block load (flw + REPEAT) fills 8 or 16 f registers.
+// Without a scheduling model every load has the default latency of 4, so the
+// bottom-up scheduler sees a block load as not yet ready when its user is
+// placed and fills the gap with other work, typically the previous block's
+// MAC, which leaves every block of a straight-line reduction loaded up front
+// (four 8-wide blocks are all 32 f registers) and spilled. Hiding load
+// latency is never worth a block spill (16 instructions), so the data edges
+// out of block loads get latency 1, and register pressure decides the order.
+class XRFBlockLoadLatencyMutation : public ScheduleDAGMutation {
+public:
+  void apply(ScheduleDAGInstrs *DAG) override {
+    for (SUnit &SU : DAG->SUnits) {
+      const MachineInstr *MI = SU.getInstr();
+      if (!MI || !MI->mayLoad() || !RISCV::getXRFRepeatPseudoInfo(MI->getOpcode()))
+        continue;
+      for (SDep &Succ : SU.Succs) {
+        if (Succ.getKind() != SDep::Data || Succ.getLatency() <= 1)
+          continue;
+        Succ.setLatency(1);
+        for (SDep &Pred : Succ.getSUnit()->Preds)
+          if (Pred.getSUnit() == &SU && Pred.getKind() == SDep::Data &&
+              Pred.getReg() == Succ.getReg())
+            Pred.setLatency(1);
+        Succ.getSUnit()->setDepthDirty();
+      }
+      SU.setHeightDirty();
+    }
+  }
+};
+} // namespace
+
 ScheduleDAGInstrs *
 RISCVTargetMachine::createMachineScheduler(MachineSchedContext *C) const {
   const RISCVSubtarget &ST = C->MF->getSubtarget<RISCVSubtarget>();
@@ -298,6 +341,9 @@ RISCVTargetMachine::createMachineScheduler(MachineSchedContext *C) const {
 
   if (!DisableVectorMaskMutation && ST.hasVInstructions())
     DAG->addMutation(createRISCVVectorMaskDAGMutation(DAG->TRI));
+
+  if (ST.hasXRepeatVRFVectors())
+    DAG->addMutation(std::make_unique<XRFBlockLoadLatencyMutation>());
 
   return DAG;
 }
@@ -645,6 +691,171 @@ bool RISCVPassConfig::addILPOpts() {
   return true;
 }
 
+static cl::opt<bool> XRepeatLoopFusion(
+    "riscv-xrepeat-loop-fusion",
+    cl::desc("XRepeat (VRF core): fuse adjacent loops before the vectorizers"),
+    cl::init(true), cl::Hidden);
+
+namespace {
+// XRepeat (VRF core): fuse adjacent loops with the same trip count right
+// before the vectorizers, then merge their induction variables and the loads
+// they share. The early full unroll turns
+//   for (u < 4) for (k) acc[u] += A[u][k] * x[k];
+// into four k loops that each reload x; fused, one k loop loads each block of
+// x once and feeds four MACs (the hand-written dotxvf). Only functions
+// compiled for the VRF core are touched.
+//
+// Only loops that share a load are fused (see worthFusing): that is the gain,
+// one load feeding the work of several loops in the same iteration. Fusing
+// unrelated loops, or loop nests whose inner loops then share nothing (two
+// convolutions with different kernels reading the same image), saves a few
+// loop-control instructions but puts their work in one loop body, which can
+// push a register-hungry loop nest into spilling (resnet8). LoopFuse itself
+// fuses every legal pair, so a pair that shouldn't be fused gets a barrier
+// LoopFuse can't move, a volatile load of a dummy stack slot in the second
+// loop's preheader, removed afterwards. indvars and GVN only run if something
+// was fused.
+class RISCVXRepeatLoopFusionPass
+    : public PassInfoMixin<RISCVXRepeatLoopFusionPass> {
+  const RISCVTargetMachine &TM;
+
+  // The addresses a loop loads from as it iterates: {start, step} of each
+  // pointer that advances with L (loads of loop-invariant addresses don't
+  // count: LICM handles them either way).
+  static SmallVector<std::pair<const SCEV *, const SCEV *>, 8>
+  getStridedLoads(Loop *L, ScalarEvolution &SE) {
+    SmallVector<std::pair<const SCEV *, const SCEV *>, 8> Res;
+    for (BasicBlock *BB : L->blocks())
+      for (Instruction &I : *BB)
+        if (auto *LI = dyn_cast<LoadInst>(&I))
+          if (auto *AR = dyn_cast<SCEVAddRecExpr>(
+                  SE.getSCEV(LI->getPointerOperand()));
+              AR && AR->getLoop() == L && AR->isAffine())
+            Res.push_back({AR->getStart(), AR->getStepRecurrence(SE)});
+    return Res;
+  }
+
+  using LoopMap = SmallDenseMap<const Loop *, const Loop *, 4>;
+
+  // S0 == S1 once each loop of the second nest is taken as its counterpart
+  // in the first (Map: second -> first), i.e. the same address once fused.
+  static bool equalModLoops(const SCEV *S0, const SCEV *S1, const LoopMap &Map) {
+    if (S0 == S1)
+      return true;
+    if (S0->getSCEVType() != S1->getSCEVType() ||
+        S0->getType() != S1->getType())
+      return false;
+    if (auto *A0 = dyn_cast<SCEVAddRecExpr>(S0)) {
+      auto *A1 = cast<SCEVAddRecExpr>(S1);
+      const Loop *L1 = Map.lookup(A1->getLoop());
+      if ((L1 ? L1 : A1->getLoop()) != A0->getLoop())
+        return false;
+    }
+    ArrayRef<const SCEV *> Ops0 = S0->operands(), Ops1 = S1->operands();
+    if (Ops0.empty() || Ops0.size() != Ops1.size())
+      return false;
+    for (auto [O0, O1] : zip(Ops0, Ops1))
+      if (!equalModLoops(O0, O1, Map))
+        return false;
+    return true;
+  }
+
+  static bool shareALoad(Loop *L0, Loop *L1, ScalarEvolution &SE,
+                         const LoopMap &Map) {
+    auto Loads0 = getStridedLoads(L0, SE);
+    for (auto &[Start1, Step1] : getStridedLoads(L1, SE))
+      for (auto &[Start0, Step0] : Loads0)
+        if (equalModLoops(Start0, Start1, Map) &&
+            equalModLoops(Step0, Step1, Map))
+          return true;
+    return false;
+  }
+
+  // Worth fusing: two innermost loops that share a load, or two loop nests of
+  // the same shape (one subloop per level) whose innermost loops do, once
+  // each loop of the second nest is matched with its counterpart in the first
+  // (so that, the nests fused, their inner loops fuse too: e.g. the Q, K and V
+  // projections of bert_tiny, three dense layers reading the same input).
+  static bool worthFusing(Loop *L0, Loop *L1, ScalarEvolution &SE,
+                          LoopMap &Map) {
+    Map[L1] = L0;
+    if (L0->isInnermost() && L1->isInnermost())
+      return shareALoad(L0, L1, SE, Map);
+    if (L0->getSubLoops().size() != 1 || L1->getSubLoops().size() != 1)
+      return false;
+    return worthFusing(L0->getSubLoops()[0], L1->getSubLoops()[0], SE, Map);
+  }
+
+public:
+  RISCVXRepeatLoopFusionPass(const RISCVTargetMachine &TM) : TM(TM) {}
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM) {
+    if (!XRepeatLoopFusion ||
+        !TM.getSubtarget<RISCVSubtarget>(F).hasXRepeatVRFVectors())
+      return PreservedAnalyses::all();
+
+    // Each loop and the sibling right before it (the last one, in dominance
+    // order, among the siblings that dominate it): a barrier where they share
+    // no load. Loop-simplify form first, as LoopFuse makes it, so that every
+    // loop has the preheader LoopFuse will check.
+    FAM.invalidate(F, LoopSimplifyPass().run(F, FAM));
+    auto &LI = FAM.getResult<LoopAnalysis>(F);
+    auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(F);
+    auto &DT = FAM.getResult<DominatorTreeAnalysis>(F);
+    SmallVector<Instruction *, 8> Barriers;
+    AllocaInst *Slot = nullptr;
+    SmallVector<Loop *, 16> Worklist(LI.begin(), LI.end());
+    for (unsigned I = 0; I < Worklist.size(); ++I) {
+      Loop *L = Worklist[I];
+      ArrayRef<Loop *> Siblings =
+          L->getParentLoop() ? ArrayRef<Loop *>(L->getParentLoop()->getSubLoops())
+                             : ArrayRef<Loop *>(LI.getTopLevelLoops());
+      append_range(Worklist, L->getSubLoops());
+      BasicBlock *Preheader = L->getLoopPreheader();
+      if (!Preheader)
+        continue;
+      Loop *Prev = nullptr;
+      for (Loop *S : Siblings)
+        if (S != L && DT.dominates(S->getHeader(), L->getHeader()) &&
+            (!Prev || DT.dominates(Prev->getHeader(), S->getHeader())))
+          Prev = S;
+      LoopMap Map;
+      if (!Prev || worthFusing(Prev, L, SE, Map))
+        continue;
+      if (!Slot)
+        Slot = new AllocaInst(Type::getInt8Ty(F.getContext()), 0, "",
+                              F.getEntryBlock().getFirstInsertionPt());
+      IRBuilder<> B(Preheader->getTerminator());
+      Barriers.push_back(B.CreateLoad(B.getInt8Ty(), Slot, /*isVolatile=*/true));
+    }
+    if (!Barriers.empty())
+      FAM.invalidate(F, PreservedAnalyses::allInSet<CFGAnalyses>());
+
+    // Fuse; clean up (one induction variable, one load of each shared address)
+    // only if loops were fused: run on unfused code, GVN's load PRE and CSE
+    // across loops lengthen live ranges for nothing (resnet8 spills more).
+    unsigned LoopsBefore = LI.getLoopsInPreorder().size();
+    PreservedAnalyses PA = LoopFusePass().run(F, FAM);
+    FAM.invalidate(F, PA);
+    if (FAM.getResult<LoopAnalysis>(F).getLoopsInPreorder().size() <
+        LoopsBefore) {
+      FunctionPassManager FPM;
+      FPM.addPass(createFunctionToLoopPassAdaptor(IndVarSimplifyPass(),
+                                                  /*UseMemorySSA=*/true));
+      FPM.addPass(GVNPass());
+      PA.intersect(FPM.run(F, FAM));
+    }
+
+    if (!Barriers.empty()) {
+      for (Instruction *Barrier : Barriers)
+        Barrier->eraseFromParent();
+      Slot->eraseFromParent();
+      PA = PreservedAnalyses::none();
+    }
+    return PA;
+  }
+};
+} // namespace
+
 void RISCVTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
 #define GET_PASS_REGISTRY "RISCVPassRegistry.def"
 #include "llvm/Passes/TargetPassRegistry.inc"
@@ -654,6 +865,12 @@ void RISCVTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
     if (Level != OptimizationLevel::O0)
       LPM.addPass(LoopIdiomVectorizePass(LoopIdiomVectorizeStyle::Predicated));
   });
+
+  PB.registerVectorizerStartEPCallback(
+      [this](FunctionPassManager &FPM, OptimizationLevel Level) {
+        if (Level.getSpeedupLevel() >= 2)
+          FPM.addPass(RISCVXRepeatLoopFusionPass(*this));
+      });
 }
 
 yaml::MachineFunctionInfo *

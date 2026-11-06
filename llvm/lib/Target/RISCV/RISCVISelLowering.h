@@ -90,6 +90,11 @@ public:
                                          CallingConv::ID CC,
                                          EVT VT) const override;
 
+  /// XRepeat VRF vectors are passed and returned as their elements.
+  unsigned getVectorTypeBreakdownForCallingConv(
+      LLVMContext &Context, CallingConv::ID CC, EVT VT, EVT &IntermediateVT,
+      unsigned &NumIntermediates, MVT &RegisterVT) const override;
+
   bool shouldFoldSelectWithIdentityConstant(unsigned BinOpcode, EVT VT,
                                             unsigned SelectOpcode, SDValue X,
                                             SDValue Y) const override;
@@ -233,6 +238,8 @@ public:
                                 AtomicOrdering Ord) const override;
   Instruction *emitTrailingFence(IRBuilderBase &Builder, Instruction *Inst,
                                  AtomicOrdering Ord) const override;
+
+  bool shouldConvertPhiType(Type *From, Type *To) const override;
 
   bool isFMAFasterThanFMulAndFAdd(const MachineFunction &MF,
                                   EVT VT) const override;
@@ -436,7 +443,15 @@ public:
                             ArrayRef<unsigned> Indices, unsigned Factor,
                             const APInt &GapMask) const override;
 
-  /// XRepeat's lowerInterleavedLoad: one strided load (LW + REPEAT) per field.
+  /// XRepeat's interleave field types (whole blocks of the core in use).
+  bool isXRepeatInterleaveFieldVT(EVT VT) const;
+  /// XRepeat (VRF core)'s lowerInterleavedStore: one strided store (fsw +
+  /// REPEAT) per field.
+  bool lowerXRepeatInterleavedStore(Instruction *Store, Value *LaneMask,
+                                    ShuffleVectorInst *SVI, unsigned Factor,
+                                    const APInt &GapMask) const;
+  /// XRepeat's lowerInterleavedLoad: one strided load (LW/flw + REPEAT) per
+  /// field.
   bool lowerXRepeatInterleavedLoad(Instruction *Load, Value *Mask,
                                    ArrayRef<ShuffleVectorInst *> Shuffles,
                                    ArrayRef<unsigned> Indices,
@@ -618,6 +633,10 @@ private:
   /// NOTE: Once BUILD_VECTOR can be custom lowered for all legal vector types,
   /// this override can be removed.
   bool mergeStoresAfterLegalization(EVT VT) const override;
+
+  /// XRepeat: don't merge scalar stores into VRF vector stores.
+  bool canMergeStoresTo(unsigned AS, EVT MemVT,
+                        const MachineFunction &MF) const override;
 
   /// Disable normalizing
   /// select(N0&N1, X, Y) => select(N0, select(N1, X, Y), Y) and

@@ -103,6 +103,11 @@ foreach Half = [0, 1] in {
                  !cast<SubRegIndex>("sub_xr" # I));
   }
 }
+
+// XRepeat (VRF core): the 8 or 16 F registers of a vector register (sub_xrf0
+// is the first). F registers are 32 bits in every HwMode.
+foreach I = 0-15 in
+  def sub_xrf # I : SubRegIndex<32, !mul(32, I)>;
 } // Namespace = "RISCV"
 
 //===----------------------------------------------------------------------===//
@@ -534,6 +539,45 @@ def FPR32C : RISCVRegisterClass<[f32], 32, (add
   (sequence "F%u_F", 15, 10),
   (sequence "F%u_F", 8, 9)
 )>;
+
+//===----------------------------------------------------------------------===//
+// XRepeat (VRF core) vector registers: 8 consecutive F registers starting at
+// f0, f8, f16 or f24, or 16 starting at f0 or f16. REPEAT walks a register
+// field by replacing its low bits with the iteration number, so a block must
+// start at a multiple of its width. The F registers hold integers as well as
+// floats, so each class has both element types.
+//===----------------------------------------------------------------------===//
+
+let RegAltNameIndices = [ABIRegAltName] in {
+  foreach Width = [8, 16] in
+  foreach Base = !range(0, 32, Width) in {
+    defvar Reg = !cast<Register>("F" # Base # "_F");
+    def "XRV_F" # Base # "_F" # !add(Base, !sub(Width, 1))
+        : RISCVRegWithSubRegs<Base, Reg.AsmName,
+                              !foreach(I, !range(Width),
+                                       !cast<Register>("F" # !add(Base, I) #
+                                                       "_F")),
+                              Reg.AltNames> {
+      let SubRegIndices = !foreach(I, !range(Width),
+                                   !cast<SubRegIndex>("sub_xrf" # I));
+      let CoveredBySubRegs = 1;
+    }
+  }
+}
+
+// Allocation order: blocks of only temporaries first. Under the ilp32f/ilp32d
+// ABIs f8, f9 and f18..f27 are callee-saved and f10..f17 carry arguments, so
+// f0..f7 goes first and f8..f15 last; under ilp32 every F register is
+// caller-saved. No pressure sets of their own: the F registers are already
+// tracked by the FPR pressure sets.
+let CopyCost = 8, GeneratePressureSet = 0 in
+def XRFVec8 : RISCVRegisterClass<[v8i32, v8f32], 32,
+                                 (add XRV_F0_F7, XRV_F24_F31, XRV_F16_F23,
+                                      XRV_F8_F15)>;
+
+let CopyCost = 16, GeneratePressureSet = 0 in
+def XRFVec16 : RISCVRegisterClass<[v16i32, v16f32], 32,
+                                  (add XRV_F0_F15, XRV_F16_F31)>;
 
 // The order of registers represents the preferred allocation sequence,
 // meaning caller-save regs are listed before callee-save.

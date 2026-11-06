@@ -1,5 +1,3 @@
-; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes=loop-vectorize -S < %s \
-; RUN:   | FileCheck %s
 ; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeatint -passes=loop-vectorize -S < %s \
 ; RUN:   | FileCheck %s
 

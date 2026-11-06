@@ -208,8 +208,10 @@ static bool getMemOperands(unsigned Factor, VectorType *VTy, Type *XLenTy,
 /// %v1 = call <8 x i32> @llvm.experimental.vp.strided.load(ptr %p1, i32 32,
 ///                                                          <all true>, i32 8)
 ///
-/// Only plain loads whose fields are whole <8 x i32> or <4 x i32> blocks are
-/// handled; anything else is left alone (and is split up element by element).
+/// Only plain loads whose fields are whole blocks are handled (GPR core:
+/// <8 x i32> or <4 x i32>; VRF core: <8 x i32/float> or <16 x i32/float>, with
+/// flw + REPEAT); anything else is left alone (and is split up element by
+/// element).
 bool RISCVTargetLowering::lowerXRepeatInterleavedLoad(
     Instruction *Load, Value *Mask, ArrayRef<ShuffleVectorInst *> Shuffles,
     ArrayRef<unsigned> Indices, unsigned Factor) const {
@@ -219,7 +221,7 @@ bool RISCVTargetLowering::lowerXRepeatInterleavedLoad(
   auto *VTy = cast<FixedVectorType>(Shuffles[0]->getType());
   const DataLayout &DL = Load->getDataLayout();
   EVT VT = getValueType(DL, VTy);
-  if ((VT != MVT::v8i32 && VT != MVT::v4i32) || LI->getAlign() < Align(4))
+  if (!isXRepeatInterleaveFieldVT(VT) || LI->getAlign() < Align(4))
     return false;
 
   IRBuilder<> Builder(Load);
@@ -244,6 +246,71 @@ bool RISCVTargetLowering::lowerXRepeatInterleavedLoad(
   return true;
 }
 
+/// The field types XRepeat lowers interleaved accesses for: whole blocks.
+bool RISCVTargetLowering::isXRepeatInterleaveFieldVT(EVT VT) const {
+  if (Subtarget.hasXRepeatVRFVectors())
+    return VT == MVT::v8i32 || VT == MVT::v8f32 || VT == MVT::v16i32 ||
+           VT == MVT::v16f32;
+  return VT == MVT::v8i32 || VT == MVT::v4i32;
+}
+
+/// XRepeat (VRF core): lower each field of an interleaved store to its own
+/// strided store, fsw + REPEAT with stride Factor * 4 bytes (the VRF core
+/// repeats stores; the GPR core can't, so it keeps the default lowering).
+///
+/// E.g. (Factor = 2):
+/// %i.vec = shufflevector <8 x i32> %re, <8 x i32> %im, <0, 8, 1, 9, ...>
+/// store <16 x i32> %i.vec, ptr %p
+/// =>
+/// call void @llvm.experimental.vp.strided.store(<8 x i32> %re, ptr %p, i32 8,
+///                                               <all true>, i32 8)
+/// %p1 = getelementptr i8, ptr %p, i32 4
+/// call void @llvm.experimental.vp.strided.store(<8 x i32> %im, ptr %p1, i32 8,
+///                                               <all true>, i32 8)
+///
+/// Only plain stores of all Factor fields, each a whole block.
+bool RISCVTargetLowering::lowerXRepeatInterleavedStore(
+    Instruction *Store, Value *LaneMask, ShuffleVectorInst *SVI,
+    unsigned Factor, const APInt &GapMask) const {
+  auto *SI = dyn_cast<StoreInst>(Store);
+  if (!SI || LaneMask || !GapMask.isAllOnes() || SI->getAlign() < Align(4))
+    return false;
+  auto *ShuffleVTy = cast<FixedVectorType>(SVI->getType());
+  unsigned NumElts = ShuffleVTy->getNumElements() / Factor;
+  auto *VTy = FixedVectorType::get(ShuffleVTy->getElementType(), NumElts);
+  const DataLayout &DL = Store->getDataLayout();
+  if (!isXRepeatInterleaveFieldVT(getValueType(DL, VTy)))
+    return false;
+
+  IRBuilder<> Builder(Store);
+  Type *XLenTy = Builder.getIntNTy(Subtarget.getXLen());
+  Value *Ptr = SI->getPointerOperand();
+  unsigned EltBytes = DL.getTypeStoreSize(VTy->getElementType());
+  Value *Stride = ConstantInt::get(XLenTy, Factor * EltBytes);
+  Value *AllTrue = Builder.getAllOnesMask(VTy->getElementCount());
+  Value *EVL = Builder.getInt32(NumElts);
+  ArrayRef<int> Mask = SVI->getShuffleMask();
+  for (unsigned Field = 0; Field < Factor; ++Field) {
+    // Field i is elements i, i + Factor, ... of the interleaving shuffle.
+    SmallVector<int, 16> FieldMask;
+    for (unsigned J = 0; J < NumElts; ++J)
+      FieldMask.push_back(Mask[Field + Factor * J]);
+    Value *Val = Builder.CreateShuffleVector(SVI->getOperand(0),
+                                             SVI->getOperand(1), FieldMask);
+    Value *FieldPtr = Builder.CreateConstGEP1_32(Builder.getInt8Ty(), Ptr,
+                                                 Field * EltBytes);
+    CallInst *FieldStore = Builder.CreateIntrinsic(
+        Intrinsic::experimental_vp_strided_store,
+        {VTy, FieldPtr->getType(), XLenTy},
+        {Val, FieldPtr, Stride, AllTrue, EVL});
+    FieldStore->addParamAttr(
+        1, Attribute::getWithAlignment(
+               Store->getContext(),
+               commonAlignment(SI->getAlign(), Field * EltBytes)));
+  }
+  return true;
+}
+
 /// E.g. Lower an interleaved load (Factor = 2):
 /// %wide.vec = load <8 x i32>, <8 x i32>* %ptr
 /// %v0 = shuffle %wide.vec, undef, <0, 2, 4, 6>  ; Extract even elements
@@ -260,7 +327,7 @@ bool RISCVTargetLowering::lowerInterleavedLoad(
   assert(Indices.size() == Shuffles.size());
   assert(GapMask.getBitWidth() == Factor);
 
-  if (Subtarget.hasXRepeatVectors())
+  if (Subtarget.hasXRepeatGPRVectors() || Subtarget.hasXRepeatVRFVectors())
     return lowerXRepeatInterleavedLoad(Load, Mask, Shuffles, Indices, Factor);
 
   // We only support cases where the skipped fields are the trailing ones.
@@ -334,6 +401,9 @@ bool RISCVTargetLowering::lowerInterleavedStore(Instruction *Store,
                                                 unsigned Factor,
                                                 const APInt &GapMask) const {
   assert(GapMask.getBitWidth() == Factor);
+
+  if (Subtarget.hasXRepeatVRFVectors())
+    return lowerXRepeatInterleavedStore(Store, LaneMask, SVI, Factor, GapMask);
 
   // We only support cases where the skipped fields are the trailing ones.
   // TODO: Lower to strided store if there is only a single active field.

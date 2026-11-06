@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Generate and compare the assembly of every benchmark in three versions:
+# Generate and compare the assembly of every benchmark in four versions:
 #   base_rv32im   plain C (<name>_base.c), plain RV32IM - the scalar baseline
-#   base_xrepeat  the same plain C with -march=rv32im_xrepeat - the compiler vectorizes it
+#   base_xrepeat  the same plain C with -march=rv32im_xrepeatint - the compiler vectorizes it
+#                 (the original GPR core)
+#   base_vrf      the same plain C with -march=rv32im_xrepeat - the compiler vectorizes it for
+#                 the VRF core (vectors in F registers)
 #   hand          the hand-written repeat.h version (main.c), plain RV32IM + inline-asm MAC/REPEAT
+#                 (the original GPR core's encodings)
 #
 # Usage: ./compare_asm.sh [extra clang flags...]      e.g. ./compare_asm.sh -DNC=256
 # Output: asm_compare/<bench>/<version>.s     full assembly, numeric register names
-#         asm_compare/<bench>/<version>.dis   objdump disassembly (xr.mac / xr.repeat for all three)
-#         asm_compare/<bench>/loops.txt       every innermost loop of the three versions, with stats
+#         asm_compare/<bench>/<version>.dis   objdump disassembly (xr.* names for all four)
+#         asm_compare/<bench>/loops.txt       every innermost loop of the four versions, with stats
 #         asm_compare/summary.txt             one table of all innermost loops, all benchmarks
 set -euo pipefail
 
@@ -44,7 +48,10 @@ compile() {  # bench version march
         -I "$INC/d1/d2" -emit-llvm -c "$(src_of "$b" "$v")" -o "$d/$v.bc" "${EXTRA[@]}"
     "$BIN/llc" -M numeric "$d/$v.bc" -o "$d/$v.s"
     "$BIN/llc" -filetype=obj "$d/$v.bc" -o "$d/$v.o"
-    "$BIN/llvm-objdump" -d --no-show-raw-insn -M numeric --mattr=+m,+xrepeat "$d/$v.o" > "$d/$v.dis"
+    # The two cores share opcodes: disassemble with the one the code was built for.
+    local ext=xrepeatint
+    [[ $march == *_xrepeat ]] && ext=xrepeat
+    "$BIN/llvm-objdump" -d --no-show-raw-insn -M numeric --mattr=+m,+$ext "$d/$v.o" > "$d/$v.dis"
     rm -f "$d/$v.bc" "$d/$v.o"
 }
 
@@ -52,8 +59,9 @@ EXTRA=("$@")
 set --
 for b in "${BENCHES[@]}"; do
     compile "$b" base_rv32im  rv32im
-    compile "$b" base_xrepeat rv32im_xrepeat
+    compile "$b" base_xrepeat rv32im_xrepeatint
+    compile "$b" base_vrf     rv32im_xrepeat
     compile "$b" hand         rv32im
 done
 python3 -I "$HERE/asm_loops.py" "$OUT" "${BENCHES[@]}"
-echo "Wrote $OUT/<bench>/{base_rv32im,base_xrepeat,hand}.{s,dis}, loops.txt and $OUT/summary.txt"
+echo "Wrote $OUT/<bench>/{base_rv32im,base_xrepeat,base_vrf,hand}.{s,dis}, loops.txt and $OUT/summary.txt"

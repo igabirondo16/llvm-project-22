@@ -1,9 +1,5 @@
-; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes=loop-unroll-full -S < %s \
-; RUN:   | FileCheck %s --check-prefixes=CHECK,KEEP
 ; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeatint -passes=loop-unroll-full -S < %s \
 ; RUN:   | FileCheck %s --check-prefixes=CHECK,KEEP
-; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes=loop-unroll-full -S < %s \
-; RUN:   -riscv-xrepeat-keep-small-loops=false | FileCheck %s --check-prefixes=CHECK,UNROLL
 ; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeatint -passes=loop-unroll-full -S < %s \
 ; RUN:   -riscv-xrepeat-keep-small-loops=false | FileCheck %s --check-prefixes=CHECK,UNROLL
 ; RUN: opt -mtriple=riscv32 -mattr=+m -passes=loop-unroll-full -S < %s \

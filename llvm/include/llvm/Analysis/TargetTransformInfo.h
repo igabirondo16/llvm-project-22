@@ -1860,6 +1860,12 @@ public:
   /// in the loop.
   LLVM_ABI bool preferInLoopReduction(RecurKind Kind, Type *Ty) const;
 
+  /// \returns True if the loop vectorizer should mark the fmul and the ordered
+  /// fadd reduction it creates from an llvm.fmuladd reduction as `contract`.
+  /// llvm.fmuladd allows exactly that fusion, and the flags let the target
+  /// fuse them back (e.g. into a fused multiply-add that accumulates in order).
+  LLVM_ABI bool preferFusedFMulAddReduction() const;
+
   /// \returns True if the target prefers reductions select kept in the loop
   /// when tail folding. i.e.
   /// loop:

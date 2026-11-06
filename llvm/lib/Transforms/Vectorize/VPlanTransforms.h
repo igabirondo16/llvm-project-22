@@ -116,11 +116,13 @@ struct VPlanTransforms {
   /// Create VPReductionRecipes for in-loop reductions. This processes chains
   /// of operations contributing to in-loop reductions and creates appropriate
   /// VPReductionRecipe instances. Block masks from \p BlockMaskCache are used
-  /// to add predication for blocks in \p BlocksNeedingPredication.
+  /// to add predication for blocks in \p BlocksNeedingPredication. With
+  /// \p ContractFMulAdd, the fmul and the reduction created from an
+  /// llvm.fmuladd link are marked `contract` (TTI::preferFusedFMulAddReduction).
   static void createInLoopReductionRecipes(
       VPlan &Plan, const DenseMap<VPBasicBlock *, VPValue *> &BlockMaskCache,
       const DenseSet<BasicBlock *> &BlocksNeedingPredication,
-      ElementCount MinVF);
+      ElementCount MinVF, bool ContractFMulAdd = false);
 
   /// Update \p Plan to account for all early exits.
   LLVM_ABI_FOR_TEST static void handleEarlyExits(VPlan &Plan,

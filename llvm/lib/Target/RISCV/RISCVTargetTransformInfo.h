@@ -36,10 +36,31 @@ class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
 
   const RISCVSubtarget *getST() const { return ST; }
 
-  /// True when XRepeat or XRepeatInt provides the fixed-length vectors: blocks
-  /// of GPRs instead of RVV registers, either three <8 x i32> (x8..x15,
-  /// x16..x23, x24..x31) or six <4 x i32> (x8..x11, x12..x15, ..., x28..x31).
-  bool hasXRepeatVectors() const { return ST->hasXRepeatVectors(); }
+  /// True when XRepeatInt provides the fixed-length vectors: blocks of GPRs
+  /// instead of RVV registers, either three <8 x i32> (x8..x15, x16..x23,
+  /// x24..x31) or six <4 x i32> (x8..x11, x12..x15, ..., x28..x31).
+  bool hasXRepeatVectors() const { return ST->hasXRepeatGPRVectors(); }
+
+  /// True when XRepeat (the VRF core) provides the fixed-length vectors:
+  /// blocks of F registers, four <8 x i32>/<8 x float> (f0, f8, f16, f24) or
+  /// two <16 x i32>/<16 x float> (f0, f16).
+  bool hasXRepeatVRFVectors() const { return ST->hasXRepeatVRFVectors(); }
+
+  /// True for fixed vectors when XRepeat keeps them in blocks of F registers.
+  /// The RVV cost model doesn't apply to them.
+  bool isXRepeatVRFVector(Type *Ty) const {
+    return hasXRepeatVRFVectors() && isa<FixedVectorType>(Ty);
+  }
+
+  /// Cost of an operation that XRepeat does with one instruction + REPEAT
+  /// pair per 8- or 16-wide F-register block of \p Ty, or std::nullopt if
+  /// \p Ty isn't legalized to such blocks.
+  std::optional<InstructionCost> getXRFPairCost(Type *Ty) const;
+
+  /// Whether \p Ty is legalized to 16-wide F-register blocks. Two of them
+  /// fill the F registers, so an instruction can't read two of them plus a
+  /// third register.
+  bool isXRF16Wide(Type *Ty) const;
 
   /// True for fixed vectors when XRepeat keeps them in GPR blocks instead of
   /// RVV registers. The RVV cost model doesn't apply to them, so the hooks
@@ -53,8 +74,11 @@ class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
   /// blocks already take 24 of the GPRs. Its throughput cost (the one the
   /// vectorizers use) is therefore invalid, so they don't choose it; the
   /// other cost kinds keep the generic estimate for existing vector code.
+  /// The same for the VRF core, where loads, stores, the integer ALU, MAC,
+  /// fadd/fsub/fmul/fmadd and add reductions are supported.
   bool isUnsupportedXRepeatOp(Type *Ty, TTI::TargetCostKind CostKind) const {
-    return CostKind == TTI::TCK_RecipThroughput && isXRepeatVector(Ty);
+    return CostKind == TTI::TCK_RecipThroughput &&
+           (isXRepeatVector(Ty) || isXRepeatVRFVector(Ty));
   }
 
   /// Cost of an operation that XRepeat does with one instruction + REPEAT
@@ -166,6 +190,12 @@ public:
 
   bool preferInLoopReduction(RecurKind Kind, Type *Ty) const override;
 
+  /// XRepeat (VRF core): an ordered float dot product is one fmadd.s + REPEAT
+  /// into the accumulator (fused, in order, like the scalar loop).
+  bool preferFusedFMulAddReduction() const override {
+    return hasXRepeatVRFVectors();
+  }
+
   bool preferEpilogueVectorization() const override {
     // Epilogue vectorization is usually unprofitable - tail folding or
     // a smaller VF would have been better.  This a blunt hammer - we
@@ -198,6 +228,9 @@ public:
                           MemIntrinsicInfo &Info) const override;
 
   unsigned getMinVectorRegisterBitWidth() const override {
+    // XRepeat VRF: the narrowest block is 8 x 32 bits (SLP starts there).
+    if (hasXRepeatVRFVectors())
+      return 256;
     return ST->useRVVForFixedLengthVectors() ? 16 : 0;
   }
 
@@ -444,8 +477,9 @@ public:
     // Don't interleave if the loop has been vectorized with scalable vectors.
     if (VF.isScalable())
       return 1;
-    // XRepeat has only six (or three) vector registers.
-    if (hasXRepeatVectors())
+    // XRepeat has only six (or three) GPR blocks, or four (or two) F-register
+    // blocks.
+    if (hasXRepeatVectors() || hasXRepeatVRFVectors())
       return 1;
     // If the loop will not be vectorized, don't interleave the loop.
     // Let regular unroll to unroll the loop.
@@ -479,7 +513,16 @@ public:
       if (ST->hasVInstructions())
         return 32;
       // XRepeat: the six 4-GPR blocks (an 8-GPR block counts as two, see
-      // getRegUsageForType).
+      // getRegUsageForType). VRF core: 5 units, with an 8-wide block 1 unit
+      // and a 16-wide one 3 (getRegUsageForType). The vectorizer counts every
+      // loaded vector as live from the top of the loop body, but the backend
+      // loads each block right before its use (XRFBlockLoadLatencyMutation),
+      // so e.g. a loop with x and four rows A0..A3 (5 blocks counted) really
+      // needs two. A 16-wide loop with two vector values live (6 units) is
+      // still rejected: two 16-wide blocks are all 32 F registers, with no
+      // room for splats, a MAC's zero addend or accumulators.
+      if (hasXRepeatVRFVectors())
+        return 5;
       return hasXRepeatVectors() ? 6 : 0;
     }
     llvm_unreachable("unknown register class");

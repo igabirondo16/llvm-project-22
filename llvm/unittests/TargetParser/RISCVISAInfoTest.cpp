@@ -1482,3 +1482,15 @@ ISA String: rv64i2p1_zicfilp1p0_zicsr2p0
 
   EXPECT_EQ(CapturedOutput, ExpectedOutput);
 }
+
+// xrepeat's vector data lives in the F registers, so it implies F;
+// xrepeatint (vectors in GPRs) doesn't.
+TEST(ParseArchString, XRepeatImpliesF) {
+  auto MaybeISAInfo = RISCVISAInfo::parseArchString("rv32i_xrepeat", true);
+  ASSERT_THAT_EXPECTED(MaybeISAInfo, Succeeded());
+  EXPECT_EQ((*MaybeISAInfo)->getExtensions().count("f"), 1UL);
+
+  MaybeISAInfo = RISCVISAInfo::parseArchString("rv32i_xrepeatint", true);
+  ASSERT_THAT_EXPECTED(MaybeISAInfo, Succeeded());
+  EXPECT_EQ((*MaybeISAInfo)->getExtensions().count("f"), 0UL);
+}

@@ -62,6 +62,8 @@ private:
                          MachineBasicBlock::iterator MBBI);
   bool expandXRVLoad(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI);
   bool expandXRMAC(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI);
+  bool expandXRFRepeat(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                       const RISCV::XRFRepeatPseudoInfo &Info);
   bool expandPseudoReadVLENBViaVSETVLIX0(MachineBasicBlock &MBB,
                                          MachineBasicBlock::iterator MBBI);
 #ifndef NDEBUG
@@ -115,6 +117,9 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
   // RISCVInstrInfo::getInstSizeInBytes expects that the total size of the
   // expanded instructions for each pseudo is correct in the Size field of the
   // tablegen definition for the pseudo.
+  if (const auto *Info = RISCV::getXRFRepeatPseudoInfo(MBBI->getOpcode()))
+    return expandXRFRepeat(MBB, MBBI, *Info);
+
   switch (MBBI->getOpcode()) {
   case RISCV::PseudoMV_FPR16INX:
     return expandMV_FPR16INX(MBB, MBBI);
@@ -128,6 +133,10 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case RISCV::PseudoXRStore8:
   case RISCV::PseudoXRLoad4:
   case RISCV::PseudoXRStore4:
+  case RISCV::PseudoXRFLoad8:
+  case RISCV::PseudoXRFStore8:
+  case RISCV::PseudoXRFLoad16:
+  case RISCV::PseudoXRFStore16:
     return expandXRLoadStore(MBB, MBBI);
   case RISCV::PseudoXRVLoad8:
   case RISCV::PseudoXRVLoad4:
@@ -608,34 +617,48 @@ static bool isXRVecReg(Register Reg) {
 }
 
 // Expands PseudoXRLoad8/4 and PseudoXRStore8/4 into one LW/SW for each of the
-// consecutive GPRs of an XRepeat vector register.
+// consecutive GPRs of an XRepeat vector register, and PseudoXRFLoad8/16 and
+// PseudoXRFStore8/16 into one FLW/FSW for each F register of a VRF one.
 bool RISCVExpandPseudo::expandXRLoadStore(MachineBasicBlock &MBB,
                                           MachineBasicBlock::iterator MBBI) {
-  static constexpr unsigned SubRegs[] = {
+  static constexpr unsigned GPRSubRegs[] = {
       RISCV::sub_xr0, RISCV::sub_xr1, RISCV::sub_xr2, RISCV::sub_xr3,
       RISCV::sub_xr4, RISCV::sub_xr5, RISCV::sub_xr6, RISCV::sub_xr7};
 
   DebugLoc DL = MBBI->getDebugLoc();
   const TargetRegisterInfo *TRI = STI->getRegisterInfo();
   MachineFunction *MF = MBB.getParent();
-  unsigned Opc = MBBI->getOpcode();
-  bool IsLoad = Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRLoad4;
-  unsigned NumElts =
-      Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRStore8 ? 8 : 4;
+  bool IsLoad, IsVRF;
+  unsigned NumElts;
+  switch (MBBI->getOpcode()) {
+  default:
+    llvm_unreachable("Not an XRepeat whole-register load/store");
+  case RISCV::PseudoXRLoad8:    IsLoad = true;  IsVRF = false; NumElts = 8;  break;
+  case RISCV::PseudoXRStore8:   IsLoad = false; IsVRF = false; NumElts = 8;  break;
+  case RISCV::PseudoXRLoad4:    IsLoad = true;  IsVRF = false; NumElts = 4;  break;
+  case RISCV::PseudoXRStore4:   IsLoad = false; IsVRF = false; NumElts = 4;  break;
+  case RISCV::PseudoXRFLoad8:   IsLoad = true;  IsVRF = true;  NumElts = 8;  break;
+  case RISCV::PseudoXRFStore8:  IsLoad = false; IsVRF = true;  NumElts = 8;  break;
+  case RISCV::PseudoXRFLoad16:  IsLoad = true;  IsVRF = true;  NumElts = 16; break;
+  case RISCV::PseudoXRFStore16: IsLoad = false; IsVRF = true;  NumElts = 16; break;
+  }
+  unsigned LoadOpc = IsVRF ? RISCV::FLW : RISCV::LW;
+  unsigned StoreOpc = IsVRF ? RISCV::FSW : RISCV::SW;
   Register VReg = MBBI->getOperand(0).getReg();
   Register Base = MBBI->getOperand(1).getReg();
   int64_t Offset = MBBI->getOperand(2).getImm();
 
   for (unsigned I = 0; I < NumElts; ++I) {
-    Register Reg = TRI->getSubReg(VReg, SubRegs[I]);
+    Register Reg = TRI->getSubReg(
+        VReg, IsVRF ? RISCVRI::getXRFSubRegIndex(I) : GPRSubRegs[I]);
     int64_t Imm = Offset + 4 * I;
     assert(isInt<12>(Imm) && "XRepeat load/store offset out of range");
 
     MachineInstrBuilder MIB;
     if (IsLoad)
-      MIB = BuildMI(MBB, MBBI, DL, TII->get(RISCV::LW), Reg);
+      MIB = BuildMI(MBB, MBBI, DL, TII->get(LoadOpc), Reg);
     else
-      MIB = BuildMI(MBB, MBBI, DL, TII->get(RISCV::SW))
+      MIB = BuildMI(MBB, MBBI, DL, TII->get(StoreOpc))
                 .addReg(Reg, getKillRegState(MBBI->getOperand(0).isKill()));
     MIB.addReg(Base).addImm(Imm);
 
@@ -718,6 +741,188 @@ bool RISCVExpandPseudo::expandXRMAC(MachineBasicBlock &MBB,
     Repeat.addReg(MBBI->getOperand(I).getReg(), RegState::Implicit);
 
   MBBI->eraseFromParent();
+  return true;
+}
+
+// True for the XRepeat VRF vector registers (both widths).
+static bool isXRFVecReg(Register Reg) {
+  return RISCV::XRFVec8RegClass.contains(Reg) ||
+         RISCV::XRFVec16RegClass.contains(Reg);
+}
+
+// An F register that is free at \p MI: not live across it and not one of its
+// operands. Returns an invalid register if there is none.
+static Register findFreeFPR32(MachineBasicBlock &MBB, MachineInstr &MI,
+                              const TargetRegisterInfo &TRI) {
+  const MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
+  LivePhysRegs LiveRegs(TRI);
+  LiveRegs.addLiveOuts(MBB);
+  for (MachineInstr &I : reverse(MBB)) {
+    if (&I == &MI)
+      break;
+    LiveRegs.stepBackward(I);
+  }
+  for (MCPhysReg Reg : RISCV::FPR32RegClass) {
+    if (!LiveRegs.available(MRI, Reg))
+      continue;
+    if (any_of(MI.operands(), [&](const MachineOperand &MO) {
+          return MO.isReg() && MO.getReg() &&
+                 TRI.regsOverlap(MO.getReg(), Reg);
+        }))
+      continue;
+    return Reg;
+  }
+  return Register();
+}
+
+// Expands an XRepeat VRF pseudo (PseudoXRF_*, see XRFRepeatPseudo in
+// RISCVInstrInfoXRepeat.td) into its base instruction on the first element of
+// each vector operand, followed by a REPEAT whose mask walks exactly the vector
+// operands. The pseudo's operands are the base instruction's, plus the stride
+// register of a load or store (other instructions don't use the stride, so it
+// is x0). The REPEAT carries the vector result as an implicit def and every
+// source as an implicit use, since they are read again on every step.
+//
+// A single (fixed) register inside a walking block would be overwritten, or
+// read, by one step and seen differently by the others. The register
+// constraints rule that out except when the register coalescer gives a value
+// the register of an element of the very block it is tied against:
+//   - a fixed source inside the result block (v - splat(v[3]), the result tied
+//     to v): the source is copied to a free F register first, which the burst
+//     reads instead;
+//   - a fixed (accumulator) result inside a source block (reduce.fadd(v[3], v),
+//     the sum tied to v[3]): the burst accumulates into a free F register,
+//     copied from and back to the accumulator.
+// Without a free F register the elements are computed one instruction each,
+// that element last (fixed source) or first (accumulator; this reorders an
+// ordered float sum, so that case is an error).
+bool RISCVExpandPseudo::expandXRFRepeat(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+    const RISCV::XRFRepeatPseudoInfo &Info) {
+  MachineInstr &MI = *MBBI;
+  DebugLoc DL = MI.getDebugLoc();
+  const TargetRegisterInfo *TRI = STI->getRegisterInfo();
+  const MCInstrDesc &Desc = TII->get(Info.BaseInstr);
+  unsigned NumBaseOps = Desc.getNumOperands();
+  unsigned NumElts = Info.NumElts;
+  // The REPEAT field of base operand I: rd = 0, rs1..rs3 = 1..3. A store's
+  // operands are (value = rs2, address = rs1, offset).
+  auto FieldOf = [&](unsigned I) { return Info.IsStore ? 2 - I : I; };
+  bool HasDef = !Info.IsStore;
+  Register Dst = HasDef ? MI.getOperand(0).getReg() : Register();
+  unsigned FirstUse = HasDef ? 1 : 0;
+  bool DstIsVec = HasDef && isXRFVecReg(Dst);
+
+  // The element of a walking block that holds a fixed register, if any, that
+  // register, and whether it is the result (accumulator) or a source.
+  std::optional<unsigned> Clash;
+  Register ClashReg;
+  bool ClashIsDst = false;
+  auto NoteClash = [&](Register Block, Register Fixed, bool IsDst) {
+    for (unsigned J = 0; J < NumElts; ++J) {
+      if (TRI->getSubReg(Block, RISCVRI::getXRFSubRegIndex(J)) !=
+          Fixed.asMCReg())
+        continue;
+      if (Clash && (*Clash != J || ClashReg != Fixed))
+        reportFatalInternalError(
+            "XRepeat: two single registers inside walking blocks");
+      Clash = J;
+      ClashReg = Fixed;
+      ClashIsDst = IsDst;
+    }
+  };
+  unsigned Mask = DstIsVec ? 1 : 0;
+  for (unsigned I = FirstUse; I < NumBaseOps; ++I) {
+    const MachineOperand &MO = MI.getOperand(I);
+    if (!MO.isReg())
+      continue;
+    if (isXRFVecReg(MO.getReg())) {
+      Mask |= 1 << FieldOf(I);
+      if (HasDef && !DstIsVec)
+        NoteClash(MO.getReg(), Dst, /*IsDst=*/true);
+    } else if (DstIsVec) {
+      NoteClash(Dst, MO.getReg(), /*IsDst=*/false);
+    }
+  }
+
+  // A free register that replaces ClashReg in the instruction, if needed.
+  Register Tmp;
+  if (Clash) {
+    assert(!Info.HasStride && "XRepeat load/store with a register clash");
+    Tmp = findFreeFPR32(MBB, MI, *TRI);
+  }
+  auto Subst = [&](Register Reg) { return Tmp && Reg == ClashReg ? Tmp : Reg; };
+  auto Copy = [&](Register To, Register From, bool Kill) {
+    BuildMI(MBB, MBBI, DL, TII->get(RISCV::FSGNJ_S), To)
+        .addReg(From, getKillRegState(Kill))
+        .addReg(From, getKillRegState(Kill));
+  };
+
+  // Base on element Elt of every vector operand.
+  auto BuildBase = [&](unsigned Elt, bool LastRead) {
+    MachineInstrBuilder MIB = BuildMI(MBB, MBBI, DL, Desc);
+    for (unsigned I = 0; I < NumBaseOps; ++I) {
+      const MachineOperand &MO = MI.getOperand(I);
+      if (!MO.isReg()) {
+        MIB.add(MO);
+        continue;
+      }
+      Register Reg = Subst(MO.getReg());
+      if (isXRFVecReg(Reg))
+        Reg = TRI->getSubReg(Reg, RISCVRI::getXRFSubRegIndex(Elt));
+      if (I < FirstUse)
+        MIB.addReg(Reg, RegState::Define |
+                            getDeadRegState(MO.isDead() && Reg == Dst));
+      else
+        MIB.addReg(Reg, getKillRegState(LastRead && MO.isKill()));
+    }
+    MIB.setMemRefs(MI.memoperands());
+    MIB->setFlags(MI.getFlags());
+    return MIB;
+  };
+
+  if (Clash && !Tmp) {
+    if (ClashIsDst && MI.mayRaiseFPException())
+      reportFatalInternalError(
+          "XRepeat: no free F register for an ordered float reduction");
+    SmallVector<unsigned, 16> Order;
+    if (ClashIsDst)
+      Order.push_back(*Clash);
+    for (unsigned Elt = 0; Elt < NumElts; ++Elt)
+      if (Elt != *Clash)
+        Order.push_back(Elt);
+    if (!ClashIsDst)
+      Order.push_back(*Clash);
+    for (unsigned Elt : Order)
+      BuildBase(Elt, /*LastRead=*/Elt == Order.back());
+    MI.eraseFromParent();
+    return true;
+  }
+
+  if (Tmp)
+    Copy(Tmp, ClashReg, /*Kill=*/false);
+  BuildBase(0, /*LastRead=*/false);
+  MachineInstrBuilder Repeat =
+      BuildMI(MBB, MBBI, DL, TII->get(RISCV::XRV_REPEAT)).addImm(Mask);
+  if (Info.HasStride)
+    Repeat.add(MI.getOperand(NumBaseOps));
+  else
+    Repeat.addReg(RISCV::X0);
+  Repeat.addImm(NumElts - 1);
+  if (HasDef)
+    Repeat.addReg(Subst(Dst), RegState::ImplicitDefine);
+  for (unsigned I = FirstUse; I < NumBaseOps; ++I) {
+    const MachineOperand &MO = MI.getOperand(I);
+    if (MO.isReg())
+      Repeat.addReg(Subst(MO.getReg()),
+                    RegState::Implicit |
+                        getKillRegState(MO.isKill() || Subst(MO.getReg()) !=
+                                                           MO.getReg()));
+  }
+  if (Tmp && ClashIsDst)
+    Copy(Dst, Tmp, /*Kill=*/true);
+
+  MI.eraseFromParent();
   return true;
 }
 

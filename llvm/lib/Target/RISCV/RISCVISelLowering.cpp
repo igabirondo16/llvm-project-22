@@ -302,9 +302,18 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
 
   // XRepeat: <8 x i32> lives in 8 consecutive GPRs (x8/x16/x24 + 0..7), and
   // <4 x i32> in 4 (x8/x12/.../x28 + 0..3).
-  if (Subtarget.hasXRepeatVectors()) {
+  if (Subtarget.hasXRepeatGPRVectors()) {
     addRegisterClass(MVT::v8i32, &RISCV::XRVecRegClass);
     addRegisterClass(MVT::v4i32, &RISCV::XRVec4RegClass);
+  }
+
+  // XRepeat: <8 x i32>/<8 x float> live in 8 consecutive F registers
+  // (f0/f8/f16/f24 + 0..7), <16 x i32>/<16 x float> in 16 (f0/f16 + 0..15).
+  if (Subtarget.hasXRepeatVRFVectors()) {
+    addRegisterClass(MVT::v8i32, &RISCV::XRFVec8RegClass);
+    addRegisterClass(MVT::v8f32, &RISCV::XRFVec8RegClass);
+    addRegisterClass(MVT::v16i32, &RISCV::XRFVec16RegClass);
+    addRegisterClass(MVT::v16f32, &RISCV::XRFVec16RegClass);
   }
 
   // Compute derived properties from the register classes.
@@ -805,7 +814,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
 
   setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
 
-  if (Subtarget.hasXRepeatVectors()) {
+  if (Subtarget.hasXRepeatGPRVectors()) {
     for (MVT XRVT : {MVT::v8i32, MVT::v4i32}) {
       // XRepeat: <8 x i32> and <4 x i32> loads, stores and copies are native,
       // and add, sub and mul are selected to MAC + REPEAT. Every other
@@ -856,6 +865,78 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
         {ISD::EXPERIMENTAL_VP_STRIDED_LOAD, ISD::EXPERIMENTAL_VP_STRIDED_STORE},
         {MVT::v8i1, MVT::v4i1}, Custom);
     // Split reductions of sums into sums of reductions (dot products).
+    setTargetDAGCombine(ISD::VECREDUCE_ADD);
+  }
+
+  if (Subtarget.hasXRepeatVRFVectors()) {
+    for (MVT XRVT : {MVT::v8i32, MVT::v8f32, MVT::v16i32, MVT::v16f32}) {
+      // XRepeat (VRF core): loads, stores, copies and the operations below
+      // are one instruction + REPEAT. Every other operation is expanded, which
+      // scalarizes it.
+      bool IsFP = XRVT.isFloatingPoint();
+      for (unsigned Op = 0; Op < ISD::BUILTIN_OP_END; ++Op) {
+        switch (Op) {
+        case ISD::LOAD:
+        case ISD::STORE:
+        case ISD::UNDEF:
+        case ISD::FREEZE:
+          break;
+        case ISD::ADD:
+        case ISD::SUB:
+        case ISD::MUL:
+        case ISD::AND:
+        case ISD::OR:
+        case ISD::XOR:
+        case ISD::SHL:
+        case ISD::SRL:
+        case ISD::SRA:
+          setOperationAction(Op, XRVT, IsFP ? Expand : Legal);
+          break;
+        case ISD::VECREDUCE_ADD:
+          setOperationAction(Op, XRVT, IsFP ? Expand : Legal);
+          break;
+        case ISD::FADD:
+        case ISD::FSUB:
+        case ISD::FMUL:
+        case ISD::FMA:
+        case ISD::VECREDUCE_FADD:
+        case ISD::VECREDUCE_SEQ_FADD:
+          setOperationAction(Op, XRVT, IsFP ? Legal : Expand);
+          break;
+        default:
+          setOperationAction(Op, XRVT, Expand);
+        }
+      }
+      // Splats become XRF_SPLAT (a fixed REPEAT field), and an element at a
+      // constant index is one register of the block.
+      setOperationAction({ISD::BUILD_VECTOR, ISD::INSERT_VECTOR_ELT,
+                          ISD::EXTRACT_VECTOR_ELT},
+                         XRVT, Custom);
+      // Two 16-wide vectors fill the 32 f registers, so a 16-wide
+      // instruction can't read two vectors and a third register: a multiply
+      // of two vectors (MAC with a zero addend) or an FMA with two vector
+      // operands is scalarized (see lowerXRepeatVRFOperation).
+      if (XRVT.getVectorNumElements() == 16)
+        setOperationAction(IsFP ? ISD::FMA : ISD::MUL, XRVT, Custom);
+      // Strided loads and stores are flw/fsw + REPEAT with the stride in a
+      // register (see lowerXRepeatVRFOperation).
+      setOperationAction(
+          {ISD::EXPERIMENTAL_VP_STRIDED_LOAD, ISD::EXPERIMENTAL_VP_STRIDED_STORE},
+          XRVT, Custom);
+      // No extending loads into, or truncating stores from, these types.
+      for (MVT VT : MVT::fixedlen_vector_valuetypes()) {
+        setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, XRVT,
+                         VT, Expand);
+        setTruncStoreAction(XRVT, VT, Expand);
+      }
+    }
+    // The strided accesses' all-true <N x i1> mask has no legal type: as on
+    // the GPR core, type legalization then offers the node to the target
+    // first, keyed by the mask's type.
+    setOperationAction(
+        {ISD::EXPERIMENTAL_VP_STRIDED_LOAD, ISD::EXPERIMENTAL_VP_STRIDED_STORE},
+        {MVT::v8i1, MVT::v16i1}, Custom);
+    // Reductions of sums become a chain of reductions into one f register.
     setTargetDAGCombine(ISD::VECREDUCE_ADD);
   }
 
@@ -2726,9 +2807,21 @@ bool RISCVTargetLowering::isExtractSubvectorCheap(EVT ResVT, EVT SrcVT,
   return (ResElts * 2) == SrcElts && Index == ResElts;
 }
 
+// True for the vector types XRepeat keeps in blocks of F registers.
+static bool isXRepeatVRFVT(EVT VT) {
+  return VT == MVT::v8i32 || VT == MVT::v8f32 || VT == MVT::v16i32 ||
+         VT == MVT::v16f32;
+}
+
+// XRepeat VRF vectors are passed and returned as their elements, exactly as
+// they are without XRepeat (when the types are illegal and get split), so the
+// ABI doesn't change and the calling convention needs no vector registers.
 MVT RISCVTargetLowering::getRegisterTypeForCallingConv(LLVMContext &Context,
                                                       CallingConv::ID CC,
                                                       EVT VT) const {
+  if (Subtarget.hasXRepeatVRFVectors() && isXRepeatVRFVT(VT))
+    return VT.getVectorElementType().getSimpleVT();
+
   // Use f32 to pass f16 if it is legal and Zfh/Zfhmin is not enabled.
   // We might still end up using a GPR but that will be decided based on ABI.
   if (VT == MVT::f16 && Subtarget.hasStdExtFOrZfinx() &&
@@ -2752,6 +2845,9 @@ RISCVTargetLowering::getNumRegisters(LLVMContext &Context, EVT VT,
 unsigned RISCVTargetLowering::getNumRegistersForCallingConv(LLVMContext &Context,
                                                            CallingConv::ID CC,
                                                            EVT VT) const {
+  if (Subtarget.hasXRepeatVRFVectors() && isXRepeatVRFVT(VT))
+    return VT.getVectorNumElements();
+
   // Use f32 to pass f16 if it is legal and Zfh/Zfhmin is not enabled.
   // We might still end up using a GPR but that will be decided based on ABI.
   if (VT == MVT::f16 && Subtarget.hasStdExtFOrZfinx() &&
@@ -2759,6 +2855,27 @@ unsigned RISCVTargetLowering::getNumRegistersForCallingConv(LLVMContext &Context
     return 1;
 
   return TargetLowering::getNumRegistersForCallingConv(Context, CC, VT);
+}
+
+// XRepeat: merging consecutive scalar stores into one VRF vector store first
+// has to build the vector in F registers (often through the constant pool), so
+// it costs more than the scalar stores it replaces.
+bool RISCVTargetLowering::canMergeStoresTo(unsigned AS, EVT MemVT,
+                                           const MachineFunction &MF) const {
+  return !(Subtarget.hasXRepeatVRFVectors() && isXRepeatVRFVT(MemVT));
+}
+
+unsigned RISCVTargetLowering::getVectorTypeBreakdownForCallingConv(
+    LLVMContext &Context, CallingConv::ID CC, EVT VT, EVT &IntermediateVT,
+    unsigned &NumIntermediates, MVT &RegisterVT) const {
+  if (Subtarget.hasXRepeatVRFVectors() && isXRepeatVRFVT(VT)) {
+    RegisterVT = VT.getVectorElementType().getSimpleVT();
+    IntermediateVT = RegisterVT;
+    NumIntermediates = VT.getVectorNumElements();
+    return NumIntermediates;
+  }
+  return TargetLowering::getVectorTypeBreakdownForCallingConv(
+      Context, CC, VT, IntermediateVT, NumIntermediates, RegisterVT);
 }
 
 // Changes the condition code and swaps operands if necessary, so the SetCC
@@ -6785,7 +6902,7 @@ bool RISCVTargetLowering::isShuffleMaskLegal(ArrayRef<int> M, EVT VT) const {
     return false;
 
   // XRepeat has no shuffles; they are expanded element by element.
-  if (Subtarget.hasXRepeatVectors())
+  if (Subtarget.hasXRepeatGPRVectors() || Subtarget.hasXRepeatVRFVectors())
     return false;
 
   // Support splats for any type. These should type legalize well.
@@ -7816,6 +7933,7 @@ RISCVTargetLowering::lowerXAndesBfHCvtBFloat16Store(SDValue Op,
 // True for the vector types XRepeat keeps in GPR blocks.
 static bool isXRepeatVT(EVT VT) { return VT == MVT::v8i32 || VT == MVT::v4i32; }
 
+
 // XRepeat: split an add reduction of a sum into a sum of add reductions. Each
 // reduction of a vector (or of a product of two) is one MAC + REPEAT that
 // accumulates into a scalar, so this avoids keeping the summed vector in a
@@ -7902,12 +8020,94 @@ static SDValue combineXRepeatDotAdd(SDNode *N, SelectionDAG &DAG) {
   return SDValue();
 }
 
+// XRepeat (VRF core): an add reduction of a sum of vectors,
+//   reduce(m0 + m1 + ...), with each m a vector or a product of two,
+// becomes a chain of reductions into one f register, each one instruction +
+// REPEAT that accumulates in place:
+//   acc = macred(addred(0, m0) ..., a1, b1) ...
+// so only the leaves' blocks are live, never their sum. (SLP reduces 16
+// products as two 8-wide ones added together; their sum would be a fourth
+// block, and the f registers hold four.) A product becomes xr.mac with the
+// accumulator fixed; a 16-wide one doesn't fit (two vectors and the
+// accumulator), so it is reduced as a vector.
+// Start is the f32 accumulator the chain starts from (0, or the bits of an i32
+// the reduction is added to; see combineXRFAddReduce).
+static SDValue buildXRFReduceChain(SDValue Start, SDValue Vec, const SDLoc &DL,
+                                   SelectionDAG &DAG) {
+  EVT VecVT = Vec.getValueType();
+  // The leaves of the tree of single-use adds.
+  SmallVector<SDValue, 8> Leaves, Work = {Vec};
+  while (!Work.empty()) {
+    SDValue V = Work.pop_back_val();
+    if (V.getOpcode() == ISD::ADD && V.hasOneUse()) {
+      Work.push_back(V.getOperand(1));
+      Work.push_back(V.getOperand(0));
+    } else {
+      Leaves.push_back(V);
+    }
+  }
+
+  SDValue Acc = Start;
+  bool Wide = VecVT.getVectorNumElements() == 16;
+  for (SDValue L : Leaves) {
+    if (L.getOpcode() == ISD::MUL && L.hasOneUse() && !Wide)
+      Acc = DAG.getNode(RISCVISD::XRF_MACRED, DL, MVT::f32, Acc,
+                        L.getOperand(0), L.getOperand(1));
+    else
+      Acc = DAG.getNode(RISCVISD::XRF_ADDRED, DL, MVT::f32, Acc, L);
+  }
+  return Acc;
+}
+
+// True for reduce(a + b + ...) of a VRF integer vector, with single uses.
+static bool isXRFReduceOfSum(SDValue R) {
+  if (R.getOpcode() != ISD::VECREDUCE_ADD || !R.hasOneUse())
+    return false;
+  SDValue Vec = R.getOperand(0);
+  EVT VecVT = Vec.getValueType();
+  return isXRepeatVRFVT(VecVT) && !VecVT.isFloatingPoint() &&
+         Vec.getOpcode() == ISD::ADD && Vec.hasOneUse();
+}
+
+static SDValue combineXRFVecReduceAdd(SDNode *N, SelectionDAG &DAG) {
+  if (!isXRFReduceOfSum(SDValue(N, 0)))
+    return SDValue();
+  // Added to something: combineXRFAddReduce starts the chain from it.
+  if (N->hasOneUse() && N->user_begin()->getOpcode() == ISD::ADD)
+    return SDValue();
+  SDLoc DL(N);
+  return DAG.getBitcast(
+      N->getValueType(0),
+      buildXRFReduceChain(DAG.getConstantFP(0.0, DL, MVT::f32),
+                          N->getOperand(0), DL, DAG));
+}
+
+// x + reduce(a + b + ...): the chain starts from x's bits instead of 0, so an
+// accumulator kept in an f register (RISCVCodeGenPrepare) flows through it.
+static SDValue combineXRFAddReduce(SDNode *N, SelectionDAG &DAG) {
+  if (N->getValueType(0) != MVT::i32)
+    return SDValue();
+  for (unsigned I = 0; I < 2; ++I) {
+    SDValue R = N->getOperand(I), X = N->getOperand(1 - I);
+    if (!isXRFReduceOfSum(R))
+      continue;
+    SDLoc DL(N);
+    return DAG.getBitcast(
+        MVT::i32, buildXRFReduceChain(DAG.getBitcast(MVT::f32, X),
+                                      R.getOperand(0), DL, DAG));
+  }
+  return SDValue();
+}
+
 bool RISCVTargetLowering::shouldReassociateReduction(unsigned RedOpc,
                                                      EVT VT) const {
   // XRepeat: keep separate reductions apart (see combineXRepeatVecReduceAdd),
   // or the two combines would undo each other forever.
-  if (Subtarget.hasXRepeatVectors() &&
+  if (Subtarget.hasXRepeatGPRVectors() &&
       isXRepeatVT(VT))
+    return false;
+  // The same on the VRF core (see combineXRFVecReduceAdd).
+  if (Subtarget.hasXRepeatVRFVectors() && isXRepeatVRFVT(VT))
     return false;
   return TargetLowering::shouldReassociateReduction(RedOpc, VT);
 }
@@ -8033,9 +8233,96 @@ static SDValue lowerXRepeatOperation(SDValue Op, SelectionDAG &DAG) {
   }
 }
 
+// Custom lowering of the operations XRepeat marks Custom on its VRF vector
+// types. Returning an empty SDValue falls back to expansion (scalarization),
+// and returning Op leaves it to instruction selection.
+static SDValue lowerXRepeatVRFOperation(SDValue Op, SelectionDAG &DAG) {
+  SDLoc DL(Op);
+  MVT VT = Op.getSimpleValueType();
+  switch (Op.getOpcode()) {
+  default:
+    return SDValue();
+  case ISD::EXTRACT_VECTOR_ELT:
+  case ISD::INSERT_VECTOR_ELT:
+    // A constant index selects a register of the block.
+    if (isa<ConstantSDNode>(Op.getOperand(Op.getNumOperands() - 1)))
+      return Op;
+    return SDValue();
+  case ISD::MUL:
+  case ISD::FMA: {
+    // 16 wide: see the operation actions. Splat operands are single
+    // registers.
+    unsigned NumVecs = count_if(Op->op_values(), [](SDValue V) {
+      return V.getOpcode() != RISCVISD::XRF_SPLAT &&
+             !(V.getOpcode() == ISD::BUILD_VECTOR &&
+               cast<BuildVectorSDNode>(V)->getSplatValue());
+    });
+    if (NumVecs >= 2)
+      return DAG.UnrollVectorOp(Op.getNode());
+    return Op;
+  }
+  case ISD::BUILD_VECTOR: {
+    auto *BV = cast<BuildVectorSDNode>(Op);
+    if (SDValue Splat = BV->getSplatValue()) {
+      // A non-constant i32 is used as its bits in an F register (see the
+      // patterns): a load becomes flw, a vector element stays where it is.
+      if (Splat.getValueType() == MVT::i32 && !isa<ConstantSDNode>(Splat))
+        Splat = DAG.getBitcast(MVT::f32, Splat);
+      return DAG.getNode(RISCVISD::XRF_SPLAT, DL, VT, Splat);
+    }
+    // Constant vectors are loaded from the constant pool (the expansion).
+    if (BV->isConstant())
+      return SDValue();
+    // Otherwise write the elements into the block one register at a time,
+    // rather than through a stack slot.
+    SDValue Vec = DAG.getUNDEF(VT);
+    for (auto [I, Elt] : enumerate(Op->op_values()))
+      if (!Elt.isUndef())
+        Vec = DAG.getNode(ISD::INSERT_VECTOR_ELT, DL, VT, Vec, Elt,
+                          DAG.getVectorIdxConstant(I, DL));
+    return Vec;
+  }
+  case ISD::EXPERIMENTAL_VP_STRIDED_LOAD: {
+    // flw + REPEAT with the stride in a register. Only the unmasked,
+    // full-length form, the only one the vectorizers emit for XRepeat.
+    auto *SL = cast<VPStridedLoadSDNode>(Op);
+    if (!isXRepeatFullVPOp(SL->getMask(), SL->getVectorLength(), VT) ||
+        SL->getExtensionType() != ISD::NON_EXTLOAD || !SL->isUnindexed())
+      return SDValue();
+    return DAG.getMemIntrinsicNode(
+        RISCVISD::XRF_STRIDED_LOAD, DL, DAG.getVTList(VT, MVT::Other),
+        {SL->getChain(), SL->getBasePtr(), SL->getStride()}, VT,
+        SL->getMemOperand());
+  }
+  case ISD::EXPERIMENTAL_VP_STRIDED_STORE: {
+    // fsw + REPEAT: unlike the GPR core, the VRF core repeats stores, and the
+    // address advances by the stride register (SLP uses -4 for reversed
+    // stores). A splat value is one fixed register (mask[2] = 0).
+    auto *SS = cast<VPStridedStoreSDNode>(Op);
+    SDValue Val = SS->getValue();
+    EVT ValVT = Val.getValueType();
+    if (!isXRepeatFullVPOp(SS->getMask(), SS->getVectorLength(), ValVT) ||
+        SS->isTruncatingStore() || !SS->isUnindexed())
+      return SDValue();
+    return DAG.getMemIntrinsicNode(
+        RISCVISD::XRF_STRIDED_STORE, DL, DAG.getVTList(MVT::Other),
+        {SS->getChain(), Val, SS->getBasePtr(), SS->getStride()}, ValVT,
+        SS->getMemOperand());
+  }
+  }
+}
+
 SDValue RISCVTargetLowering::LowerOperation(SDValue Op,
                                             SelectionDAG &DAG) const {
-  if (Subtarget.hasXRepeatVectors() &&
+  if (Subtarget.hasXRepeatVRFVectors() &&
+      (isXRepeatVRFVT(Op.getValueType()) ||
+       (Op.getOpcode() == ISD::EXTRACT_VECTOR_ELT &&
+        isXRepeatVRFVT(Op.getOperand(0).getValueType())) ||
+       (Op.getOpcode() == ISD::EXPERIMENTAL_VP_STRIDED_STORE &&
+        isXRepeatVRFVT(Op.getOperand(1).getValueType()))))
+    return lowerXRepeatVRFOperation(Op, DAG);
+
+  if (Subtarget.hasXRepeatGPRVectors() &&
       (isXRepeatVT(Op.getValueType()) ||
        ((Op.getOpcode() == ISD::VECREDUCE_ADD ||
          Op.getOpcode() == ISD::EXTRACT_VECTOR_ELT) &&
@@ -21201,7 +21488,7 @@ SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
     return true;
   };
 
-  if (Subtarget.hasXRepeatVectors()) {
+  if (Subtarget.hasXRepeatGPRVectors()) {
     if (N->getOpcode() == ISD::VECREDUCE_ADD)
       if (SDValue V = combineXRepeatVecReduceAdd(N, DAG))
         return V;
@@ -21211,6 +21498,17 @@ SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
     // The RISC-V combines below assume scalar or RVV types; XRepeat's v8i32
     // and v4i32 are neither.
     if (N->getNumValues() > 0 && isXRepeatVT(N->getValueType(0)))
+      return SDValue();
+  }
+  // The same for XRepeat's VRF vectors.
+  if (Subtarget.hasXRepeatVRFVectors()) {
+    if (N->getOpcode() == ISD::VECREDUCE_ADD)
+      if (SDValue V = combineXRFVecReduceAdd(N, DAG))
+        return V;
+    if (N->getOpcode() == ISD::ADD)
+      if (SDValue V = combineXRFAddReduce(N, DAG))
+        return V;
+    if (N->getNumValues() > 0 && isXRepeatVRFVT(N->getValueType(0)))
       return SDValue();
   }
 
@@ -25583,11 +25881,26 @@ bool RISCVTargetLowering::getPostIndexedAddressParts(SDNode *N, SDNode *Op,
   return true;
 }
 
+bool RISCVTargetLowering::shouldConvertPhiType(Type *From, Type *To) const {
+  // XRepeat (VRF core): RISCVCodeGenPrepare makes an i32 reduction
+  // accumulator a float phi so that it stays in its f register (the
+  // reduction's xr.add/xr.mac writes it there); don't turn it back into i32.
+  if (Subtarget.hasXRepeatVRFVectors() && From->isFloatTy() &&
+      To->isIntegerTy())
+    return false;
+  return TargetLowering::shouldConvertPhiType(From, To);
+}
+
 bool RISCVTargetLowering::isFMAFasterThanFMulAndFAdd(const MachineFunction &MF,
                                                      EVT VT) const {
   EVT SVT = VT.getScalarType();
 
   if (!SVT.isSimple())
+    return false;
+
+  // XRepeat: a 16-wide FMA of two vectors doesn't fit in the f registers (see
+  // the operation actions), while separate FMUL and FADD do.
+  if (Subtarget.hasXRepeatVRFVectors() && VT == MVT::v16f32)
     return false;
 
   switch (SVT.getSimpleVT().SimpleTy) {
@@ -26020,9 +26333,12 @@ bool RISCVTargetLowering::isLegalStridedLoadStore(EVT DataType,
                                                   Align Alignment) const {
   // XRepeat: a strided load is LW + REPEAT with the stride in a register, and
   // a strided store is one SW per element (see lowerXRepeatOperation).
-  if (Subtarget.hasXRepeatVectors())
+  if (Subtarget.hasXRepeatGPRVectors())
     return (DataType == MVT::v8i32 || DataType == MVT::v4i32) &&
            Alignment >= Align(4);
+  // XRepeat (VRF core): both are flw/fsw + REPEAT with the stride register.
+  if (Subtarget.hasXRepeatVRFVectors())
+    return isXRepeatVRFVT(DataType) && Alignment >= Align(4);
 
   if (!Subtarget.hasVInstructions())
     return false;

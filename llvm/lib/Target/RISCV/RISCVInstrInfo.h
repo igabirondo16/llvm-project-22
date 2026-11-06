@@ -436,6 +436,18 @@ struct RISCVMaskedPseudoInfo {
 };
 #define GET_RISCVMaskedPseudosTable_DECL
 #include "RISCVGenSearchableTables.inc"
+
+// An XRepeat VRF pseudo that is BaseInstr + REPEAT over NumElts elements (see
+// XRFRepeatPseudo in RISCVInstrInfoXRepeat.td).
+struct XRFRepeatPseudoInfo {
+  uint16_t Pseudo;
+  uint16_t BaseInstr;
+  uint8_t NumElts;
+  bool IsStore;
+  bool HasStride;
+};
+#define GET_XRFRepeatPseudosTable_DECL
+#include "RISCVGenSearchableTables.inc"
 } // end namespace RISCV
 
 } // end namespace llvm

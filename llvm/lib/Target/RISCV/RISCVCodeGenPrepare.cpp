@@ -49,6 +49,7 @@ public:
   bool visitIntrinsicInst(IntrinsicInst &I);
   bool expandVPStrideLoad(IntrinsicInst &I);
   bool widenVPMerge(IntrinsicInst &I);
+  bool keepXRFAccumulatorInFPR(IntrinsicInst &I);
 };
 } // namespace
 
@@ -219,8 +220,16 @@ bool RISCVCodeGenPrepare::visitIntrinsicInst(IntrinsicInst &I) {
   if (widenVPMerge(I))
     return true;
 
+  if (keepXRFAccumulatorInFPR(I))
+    return true;
+
   if (I.getIntrinsicID() != Intrinsic::vector_reduce_fadd &&
       !isa<VPReductionIntrinsic>(&I))
+    return false;
+
+  // XRepeat (VRF core) accumulates a reduction into a single F register, so a
+  // scalar phi is what it wants; the vector phi below is for RVV.
+  if (!ST->hasVInstructions())
     return false;
 
   auto *PHI = dyn_cast<PHINode>(I.getOperand(0));
@@ -244,6 +253,103 @@ bool RISCVCodeGenPrepare::visitIntrinsicInst(IntrinsicInst &I) {
 
   PHI->eraseFromParent();
 
+  return true;
+}
+
+// XRepeat (VRF core): an in-loop i32 add reduction
+//
+//   loop:
+//     %acc = phi i32 [ %init, %ph ], [ %acc.next, %loop ]
+//     %r = call i32 @llvm.vector.reduce.add(<N x i32> %v)
+//     %acc.next = add i32 %acc, %r
+//
+// is one xr.add/xr.mac + REPEAT into a fixed f register, but an i32 phi lives
+// in an x register, so every iteration would move the sum to an x register
+// and add it there. Give the phi type float instead (bitcasts at both ends),
+// so the accumulator stays in its f register and isel folds
+// bitcast(add(bitcast %acc, reduce)) into the reduction itself:
+//
+//   loop:
+//     %acc.f = phi float [ bitcast %init, %ph ], [ %acc.next.f, %loop ]
+//     %acc.next = add i32 (bitcast %acc.f), %r
+//     %acc.next.f = bitcast %acc.next to float
+//
+// Uses of %acc.next after the loop read bitcast %acc.next.f there. A phi
+// after the loop with several inputs (e.g. the start value of the next of a
+// chain of reduction loops, which is rewritten the same way) gets the bitcast
+// at the end of the incoming block, where back-to-back bitcasts cancel out.
+bool RISCVCodeGenPrepare::keepXRFAccumulatorInFPR(IntrinsicInst &I) {
+  if (!ST->hasXRepeatVRFVectors() || ST->hasVInstructions() ||
+      I.getIntrinsicID() != Intrinsic::vector_reduce_add ||
+      !I.getType()->isIntegerTy(32) || !I.hasOneUse())
+    return false;
+  auto *VecTy = dyn_cast<FixedVectorType>(I.getOperand(0)->getType());
+  if (!VecTy || (VecTy->getNumElements() != 8 && VecTy->getNumElements() != 16))
+    return false;
+
+  auto *Add = dyn_cast<BinaryOperator>(I.user_back());
+  if (!Add || Add->getOpcode() != Instruction::Add)
+    return false;
+  auto *PHI = dyn_cast<PHINode>(Add->getOperand(0) == &I ? Add->getOperand(1)
+                                                           : Add->getOperand(0));
+  BasicBlock *BB = Add->getParent();
+  if (!PHI || PHI->getParent() != BB || I.getParent() != BB ||
+      !PHI->hasOneUse() || PHI->getBasicBlockIndex(BB) < 0 ||
+      PHI->getIncomingValueForBlock(BB) != Add)
+    return false;
+  // Every other use of the sum must be after the loop, in another block.
+  for (User *U : Add->users()) {
+    auto *UI = cast<Instruction>(U);
+    if (UI != PHI && UI->getParent() == BB)
+      return false;
+  }
+
+  Type *FTy = Type::getFloatTy(F.getContext());
+  IRBuilder<> Builder(PHI);
+  PHINode *FPHI = Builder.CreatePHI(FTy, PHI->getNumIncomingValues(),
+                                    PHI->getName() + ".xrf");
+  Builder.SetInsertPoint(Add);
+  Value *AccI = Builder.CreateBitCast(FPHI, Add->getType());
+  Builder.SetInsertPoint(Add->getNextNode());
+  auto *NextF = cast<Instruction>(
+      Builder.CreateBitCast(Add, FTy, Add->getName() + ".xrf"));
+
+  // Uses after the loop: LCSSA phis become float phis, others read a bitcast
+  // placed right before them.
+  for (Use &U : llvm::make_early_inc_range(Add->uses())) {
+    auto *UI = cast<Instruction>(U.getUser());
+    if (UI == PHI || UI == NextF)
+      continue;
+    if (auto *UP = dyn_cast<PHINode>(UI); UP && UP->getNumIncomingValues() > 1) {
+      Builder.SetInsertPoint(UP->getIncomingBlock(U)->getTerminator());
+      U.set(Builder.CreateBitCast(NextF, Add->getType()));
+      continue;
+    }
+    if (auto *UP = dyn_cast<PHINode>(UI)) {
+      Builder.SetInsertPoint(UP);
+      PHINode *NP = Builder.CreatePHI(FTy, 1, UP->getName() + ".xrf");
+      NP->addIncoming(NextF, UP->getIncomingBlock(0));
+      Builder.SetInsertPoint(UP->getParent()->getFirstInsertionPt());
+      UP->replaceAllUsesWith(Builder.CreateBitCast(NP, UP->getType()));
+      UP->eraseFromParent();
+      continue;
+    }
+    Builder.SetInsertPoint(UI);
+    U.set(Builder.CreateBitCast(NextF, Add->getType()));
+  }
+
+  for (unsigned K = 0, E = PHI->getNumIncomingValues(); K != E; ++K) {
+    BasicBlock *In = PHI->getIncomingBlock(K);
+    Value *V = PHI->getIncomingValue(K);
+    if (V == Add) {
+      FPHI->addIncoming(NextF, In);
+      continue;
+    }
+    Builder.SetInsertPoint(In->getTerminator());
+    FPHI->addIncoming(Builder.CreateBitCast(V, FTy), In);
+  }
+  Add->replaceUsesOfWith(PHI, AccI);
+  PHI->eraseFromParent();
   return true;
 }
 

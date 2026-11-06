@@ -1487,15 +1487,15 @@ def HasVendorXwchc
 
 // repeat_rv (custom core) Extension(s)
 //
-// XRepeat is the version under development. XRepeatInt is a frozen copy of
-// what XRepeat could do when the two were split, kept as a fixed reference
-// point: it shares all of today's instructions and code generation through
-// HasVendorXRepeatAny, and what only XRepeat gains later is guarded by
-// HasVendorXRepeat (hasVendorXRepeat() in C++). The two share their opcodes,
-// so they can't be enabled together.
+// XRepeat is the version under development; it targets the core whose vector
+// data lives in a second register file, the F registers (hence it implies F).
+// XRepeatInt is the original core (vectors in blocks of GPRs), frozen as it
+// was when XRepeat moved on. The two share opcodes, so they can't be enabled
+// together.
 
 def FeatureVendorXRepeat
-    : RISCVExtension<1, 0, "repeat_rv Repeat and Multiply-Accumulate">;
+    : RISCVExtension<1, 0, "repeat_rv Repeat and Multiply-Accumulate",
+                     [FeatureStdExtF]>;
 def HasVendorXRepeat
     : Predicate<"Subtarget->hasVendorXRepeat()">,
       AssemblerPredicate<(all_of FeatureVendorXRepeat),
@@ -1509,14 +1509,6 @@ def HasVendorXRepeatInt
       AssemblerPredicate<(all_of FeatureVendorXRepeatInt),
                          "'XRepeatInt' (repeat_rv Repeat and "
                          "Multiply-Accumulate, frozen original version)">;
-
-// What both versions have: MAC, REPEAT and the code generation built on them.
-def HasVendorXRepeatAny
-    : Predicate<"Subtarget->hasVendorXRepeat() || "
-                "Subtarget->hasVendorXRepeatInt()">,
-      AssemblerPredicate<(any_of FeatureVendorXRepeat, FeatureVendorXRepeatInt),
-                         "'XRepeat' or 'XRepeatInt' (repeat_rv Repeat and "
-                         "Multiply-Accumulate)">;
 
 // Qualcomm Extensions
 

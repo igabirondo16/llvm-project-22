@@ -13,6 +13,7 @@
 #ifndef LLVM_LIB_TARGET_RISCV_RISCVREGISTERINFO_H
 #define LLVM_LIB_TARGET_RISCV_RISCVREGISTERINFO_H
 
+#include "MCTargetDesc/RISCVMCTargetDesc.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/TargetParser/RISCVTargetParser.h"
 
@@ -58,6 +59,18 @@ static inline RISCVVType::VLMUL getLMul(uint8_t TSFlags) {
 /// \returns the NF for the register class.
 static inline unsigned getNF(uint8_t TSFlags) {
   return static_cast<unsigned>((TSFlags & NFShiftMask) >> NFShift) + 1;
+}
+
+/// \returns the sub-register index of element \p I of an XRepeat VRF vector
+/// register (XRFVec8 or XRFVec16).
+static inline unsigned getXRFSubRegIndex(unsigned I) {
+  static constexpr unsigned SubRegs[] = {
+      RISCV::sub_xrf0,  RISCV::sub_xrf1,  RISCV::sub_xrf2,  RISCV::sub_xrf3,
+      RISCV::sub_xrf4,  RISCV::sub_xrf5,  RISCV::sub_xrf6,  RISCV::sub_xrf7,
+      RISCV::sub_xrf8,  RISCV::sub_xrf9,  RISCV::sub_xrf10, RISCV::sub_xrf11,
+      RISCV::sub_xrf12, RISCV::sub_xrf13, RISCV::sub_xrf14, RISCV::sub_xrf15};
+  assert(I < 16 && "XRepeat VRF element out of range");
+  return SubRegs[I];
 }
 } // namespace RISCVRI
 

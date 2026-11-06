@@ -707,7 +707,7 @@ void VPlanTransforms::createHeaderPhiRecipes(
 void VPlanTransforms::createInLoopReductionRecipes(
     VPlan &Plan, const DenseMap<VPBasicBlock *, VPValue *> &BlockMaskCache,
     const DenseSet<BasicBlock *> &BlocksNeedingPredication,
-    ElementCount MinVF) {
+    ElementCount MinVF, bool ContractFMulAdd) {
   VPTypeAnalysis TypeInfo(Plan);
   VPBasicBlock *Header = Plan.getVectorLoopRegion()->getEntryBasicBlock();
   SmallVector<VPRecipeBase *> ToDelete;
@@ -795,10 +795,17 @@ void VPlanTransforms::createInLoopReductionRecipes(
         // need to create an fmul recipe (multiplying the first two operands of
         // the fmuladd together) to use as the vector operand for the fadd
         // reduction.
+        // llvm.fmuladd allows fusing the multiply into the add; with
+        // ContractFMulAdd the fmul and the reduction say so (`contract`), so
+        // the target may fuse them back.
+        FastMathFlags MulFMF = CurrentLinkI->getFastMathFlags();
+        if (ContractFMulAdd) {
+          MulFMF.setAllowContract();
+          FMFs.setAllowContract();
+        }
         auto *FMulRecipe = new VPInstruction(
             Instruction::FMul,
-            {CurrentLink->getOperand(0), CurrentLink->getOperand(1)},
-            CurrentLinkI->getFastMathFlags());
+            {CurrentLink->getOperand(0), CurrentLink->getOperand(1)}, MulFMF);
         LinkVPBB->insert(FMulRecipe, CurrentLink->getIterator());
         VecOp = FMulRecipe;
       } else if (Kind == RecurKind::AddChainWithSubs &&

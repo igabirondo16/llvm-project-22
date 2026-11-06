@@ -78,6 +78,8 @@ namespace llvm::RISCV {
 
 #define GET_RISCVMaskedPseudosTable_IMPL
 #include "RISCVGenSearchableTables.inc"
+#define GET_XRFRepeatPseudosTable_IMPL
+#include "RISCVGenSearchableTables.inc"
 
 } // end namespace llvm::RISCV
 
@@ -572,6 +574,19 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
+  // XRepeat VRF blocks: xr.addi vd, vs, 0 + REPEAT (a plain 32-bit copy of
+  // every element), expanded in RISCVExpandPseudoInsts.cpp.
+  if (RISCV::XRFVec8RegClass.contains(DstReg, SrcReg) ||
+      RISCV::XRFVec16RegClass.contains(DstReg, SrcReg)) {
+    unsigned Opc = RISCV::XRFVec8RegClass.contains(DstReg)
+                       ? RISCV::PseudoXRF_XRV_ADDI_8_V
+                       : RISCV::PseudoXRF_XRV_ADDI_16_V;
+    BuildMI(MBB, MBBI, DL, get(Opc), DstReg)
+        .addReg(SrcReg, KillFlag)
+        .addImm(0);
+    return;
+  }
+
   // Handle copy from csr
   if (RISCV::VCSRRegClass.contains(SrcReg) &&
       RISCV::GPRRegClass.contains(DstReg)) {
@@ -686,6 +701,10 @@ void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     Opcode = RISCV::PseudoXRStore8;
   } else if (RISCV::XRVec4RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::PseudoXRStore4;
+  } else if (RISCV::XRFVec8RegClass.hasSubClassEq(RC)) {
+    Opcode = RISCV::PseudoXRFStore8;
+  } else if (RISCV::XRFVec16RegClass.hasSubClassEq(RC)) {
+    Opcode = RISCV::PseudoXRFStore16;
   } else if (RISCV::FPR16RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::FSH;
   } else if (RISCV::FPR32RegClass.hasSubClassEq(RC)) {
@@ -782,6 +801,10 @@ void RISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
     Opcode = RISCV::PseudoXRLoad8;
   } else if (RISCV::XRVec4RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::PseudoXRLoad4;
+  } else if (RISCV::XRFVec8RegClass.hasSubClassEq(RC)) {
+    Opcode = RISCV::PseudoXRFLoad8;
+  } else if (RISCV::XRFVec16RegClass.hasSubClassEq(RC)) {
+    Opcode = RISCV::PseudoXRFLoad16;
   } else if (RISCV::FPR16RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::FLH;
   } else if (RISCV::FPR32RegClass.hasSubClassEq(RC)) {
@@ -3492,6 +3515,13 @@ bool RISCVInstrInfo::shouldClusterMemOps(
   if (!BaseOps1.empty() && !BaseOps2.empty()) {
     const MachineInstr &FirstLdSt = *BaseOps1.front()->getParent();
     const MachineInstr &SecondLdSt = *BaseOps2.front()->getParent();
+    // XRepeat (VRF core): a block load or store fills or reads 8 or 16 f
+    // registers. Clustering two of them only makes both blocks live at once
+    // (two 16-wide ones are the whole register file); leave their order to
+    // the register-pressure heuristics.
+    if (RISCV::getXRFRepeatPseudoInfo(FirstLdSt.getOpcode()) ||
+        RISCV::getXRFRepeatPseudoInfo(SecondLdSt.getOpcode()))
+      return false;
     if (!memOpsHaveSameBasePtr(FirstLdSt, BaseOps1, SecondLdSt, BaseOps2))
       return false;
   } else if (!BaseOps1.empty() || !BaseOps2.empty()) {

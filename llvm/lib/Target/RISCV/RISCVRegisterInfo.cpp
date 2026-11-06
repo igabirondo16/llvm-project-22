@@ -558,9 +558,15 @@ bool RISCVRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     } else if (((Opc == RISCV::PseudoXRLoad8 || Opc == RISCV::PseudoXRStore8) &&
                 !isInt<12>(Lo12 + 28)) ||
                ((Opc == RISCV::PseudoXRLoad4 || Opc == RISCV::PseudoXRStore4) &&
-                !isInt<12>(Lo12 + 12))) {
-      // Expanded into 8 (or 4) LW/SW at offsets +0..+28 (+12); if the last
-      // one would not fit in 12 bits, don't fold the offset.
+                !isInt<12>(Lo12 + 12)) ||
+               ((Opc == RISCV::PseudoXRFLoad8 ||
+                 Opc == RISCV::PseudoXRFStore8) &&
+                !isInt<12>(Lo12 + 28)) ||
+               ((Opc == RISCV::PseudoXRFLoad16 ||
+                 Opc == RISCV::PseudoXRFStore16) &&
+                !isInt<12>(Lo12 + 60))) {
+      // Expanded into one LW/SW (FLW/FSW) per element at offsets +0..+4*(N-1);
+      // if the last one would not fit in 12 bits, don't fold the offset.
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(0);
     } else {
       // We can encode an add with 12 bit signed immediate in the immediate

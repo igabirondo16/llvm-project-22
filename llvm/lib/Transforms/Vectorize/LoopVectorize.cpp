@@ -8485,7 +8485,8 @@ VPlanPtr LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(
       BlocksNeedingPredication.insert(BB);
 
   VPlanTransforms::createInLoopReductionRecipes(
-      *Plan, BlockMaskCache, BlocksNeedingPredication, Range.Start);
+      *Plan, BlockMaskCache, BlocksNeedingPredication, Range.Start,
+      TTI.preferFusedFMulAddReduction());
 
   // Now process all other blocks and instructions.
   for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(RPOT)) {

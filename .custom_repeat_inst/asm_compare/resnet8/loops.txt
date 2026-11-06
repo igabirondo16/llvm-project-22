@@ -1,5 +1,5 @@
 ============================== resnet8 / base_rv32im: 54 innermost loops ==============================
---- main .LBB0_2: 20 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 3 sw, 3 mul
+--- main .LBB0_2: 20 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 3 sw, 3 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	slli	x5, x11, 8
@@ -21,7 +21,7 @@
 	addi	x17, x17, 12
 	bne	x17, x16, .LBB0_2
 
---- main .LBB0_5: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_5: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -37,7 +37,7 @@
 	addi	x10, x10, 4
 	bne	x10, x13, .LBB0_5
 
---- main .LBB0_7: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_7: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -53,7 +53,7 @@
 	addi	x12, x12, 4
 	bne	x12, x10, .LBB0_7
 
---- main .LBB0_9: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_9: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -69,7 +69,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_9
 
---- main .LBB0_11: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_11: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -85,7 +85,7 @@
 	addi	x10, x10, 4
 	bne	x10, x12, .LBB0_11
 
---- main .LBB0_13: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_13: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -101,7 +101,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_13
 
---- main .LBB0_15: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_15: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -117,7 +117,7 @@
 	addi	x12, x12, 4
 	bne	x12, x10, .LBB0_15
 
---- main .LBB0_17: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_17: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -133,7 +133,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_17
 
---- main .LBB0_19: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_19: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -149,7 +149,7 @@
 	addi	x10, x10, 4
 	bne	x10, x12, .LBB0_19
 
---- main .LBB0_21: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_21: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -165,7 +165,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_21
 
---- main .LBB0_23: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_23: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -181,7 +181,7 @@
 	addi	x12, x12, 4
 	bne	x12, x13, .LBB0_23
 
---- main .LBB0_25: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_25: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -197,7 +197,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_25
 
---- main .LBB0_27: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_27: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -213,7 +213,7 @@
 	addi	x13, x13, 4
 	bne	x13, x10, .LBB0_27
 
---- main .LBB0_29: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_29: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -229,7 +229,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_29
 
---- main .LBB0_31: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_31: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -245,7 +245,7 @@
 	addi	x10, x10, 4
 	bne	x10, x12, .LBB0_31
 
---- main .LBB0_33: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_33: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -261,7 +261,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_33
 
---- main .LBB0_35: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_35: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -277,7 +277,7 @@
 	addi	x12, x12, 4
 	bne	x12, x10, .LBB0_35
 
---- main .LBB0_37: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_37: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -293,7 +293,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_37
 
---- main .LBB0_39: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_39: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x13, x11, 16
@@ -309,7 +309,7 @@
 	addi	x10, x10, 4
 	bne	x10, x16, .LBB0_39
 
---- main .LBB0_41: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_41: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -325,7 +325,7 @@
 	addi	x10, x10, 4
 	bne	x10, x13, .LBB0_41
 
---- main .LBB0_58: 67 insns, 0 xr.mac, 0 xr.repeat, 32 lw, 0 sw, 16 mul
+--- main .LBB0_58: 67 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 32 lw, 0 sw, 16 mul
 	lw	x24, -32(x22)
 	lw	x25, -28(x22)
 	lw	x26, -24(x22)
@@ -394,7 +394,7 @@
 	addi	x23, x23, 64
 	bne	x22, x21, .LBB0_58
 
---- main .LBB0_70: 67 insns, 0 xr.mac, 0 xr.repeat, 32 lw, 0 sw, 16 mul
+--- main .LBB0_70: 67 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 32 lw, 0 sw, 16 mul
 	lw	x10, -32(x23)
 	lw	x25, -28(x23)
 	lw	x26, -24(x23)
@@ -463,7 +463,7 @@
 	addi	x24, x24, 64
 	bne	x23, x22, .LBB0_70
 
---- main .LBB0_82: 67 insns, 0 xr.mac, 0 xr.repeat, 32 lw, 0 sw, 16 mul
+--- main .LBB0_82: 67 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 32 lw, 0 sw, 16 mul
 	lw	x10, -32(x23)
 	lw	x25, -28(x23)
 	lw	x26, -24(x23)
@@ -532,7 +532,7 @@
 	addi	x24, x24, 64
 	bne	x23, x22, .LBB0_82
 
---- main .LBB0_103: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_103: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -541,7 +541,7 @@
 	addi	x19, x19, 4
 	bne	x22, x23, .LBB0_103
 
---- main .LBB0_105: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_105: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x7, 0(x19)
 	lw	x6, 0(x22)
 	addi	x22, x22, 4
@@ -550,7 +550,7 @@
 	addi	x19, x19, 4
 	bne	x22, x28, .LBB0_105
 
---- main .LBB0_107: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_107: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -559,7 +559,7 @@
 	addi	x19, x19, 4
 	bne	x22, x14, .LBB0_107
 
---- main .LBB0_109: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_109: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -568,7 +568,7 @@
 	addi	x19, x19, 4
 	bne	x22, x26, .LBB0_109
 
---- main .LBB0_111: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_111: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -577,7 +577,7 @@
 	addi	x19, x19, 4
 	bne	x22, x27, .LBB0_111
 
---- main .LBB0_113: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_113: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -586,7 +586,7 @@
 	addi	x19, x19, 4
 	bne	x22, x25, .LBB0_113
 
---- main .LBB0_115: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_115: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -595,7 +595,7 @@
 	addi	x19, x19, 4
 	bne	x22, x24, .LBB0_115
 
---- main .LBB0_117: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_117: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -604,7 +604,7 @@
 	addi	x19, x19, 4
 	bne	x22, x16, .LBB0_117
 
---- main .LBB0_119: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_119: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x19)
 	lw	x7, 0(x22)
 	addi	x22, x22, 4
@@ -613,7 +613,7 @@
 	addi	x19, x19, 4
 	bne	x22, x13, .LBB0_119
 
---- main .LBB0_129: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_129: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -622,7 +622,7 @@
 	addi	x31, x31, 4
 	bne	x20, x9, .LBB0_129
 
---- main .LBB0_131: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_131: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x6, 0(x31)
 	lw	x17, 0(x20)
 	addi	x20, x20, 4
@@ -631,7 +631,7 @@
 	addi	x31, x31, 4
 	bne	x20, x11, .LBB0_131
 
---- main .LBB0_133: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_133: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -640,7 +640,7 @@
 	addi	x31, x31, 4
 	bne	x20, x23, .LBB0_133
 
---- main .LBB0_135: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_135: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -649,7 +649,7 @@
 	addi	x31, x31, 4
 	bne	x20, x12, .LBB0_135
 
---- main .LBB0_137: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_137: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -658,7 +658,7 @@
 	addi	x31, x31, 4
 	bne	x20, x8, .LBB0_137
 
---- main .LBB0_139: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_139: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -667,7 +667,7 @@
 	addi	x31, x31, 4
 	bne	x20, x22, .LBB0_139
 
---- main .LBB0_141: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_141: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -676,7 +676,7 @@
 	addi	x31, x31, 4
 	bne	x20, x1, .LBB0_141
 
---- main .LBB0_143: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_143: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -685,7 +685,7 @@
 	addi	x31, x31, 4
 	bne	x20, x14, .LBB0_143
 
---- main .LBB0_145: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_145: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x31)
 	lw	x6, 0(x20)
 	addi	x20, x20, 4
@@ -694,7 +694,7 @@
 	addi	x31, x31, 4
 	bne	x20, x13, .LBB0_145
 
---- main .LBB0_155: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_155: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x20, 0(x18)
 	lw	x21, 0(x19)
 	addi	x19, x19, 4
@@ -703,7 +703,7 @@
 	addi	x18, x18, 4
 	bne	x19, x29, .LBB0_155
 
---- main .LBB0_167: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_167: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -712,7 +712,7 @@
 	addi	x19, x19, 4
 	bne	x22, x8, .LBB0_167
 
---- main .LBB0_169: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_169: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -721,7 +721,7 @@
 	addi	x19, x19, 4
 	bne	x22, x23, .LBB0_169
 
---- main .LBB0_171: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_171: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -730,7 +730,7 @@
 	addi	x19, x19, 4
 	bne	x22, x6, .LBB0_171
 
---- main .LBB0_173: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_173: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -739,7 +739,7 @@
 	addi	x19, x19, 4
 	bne	x22, x24, .LBB0_173
 
---- main .LBB0_175: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_175: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -748,7 +748,7 @@
 	addi	x19, x19, 4
 	bne	x22, x26, .LBB0_175
 
---- main .LBB0_177: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_177: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -757,7 +757,7 @@
 	addi	x19, x19, 4
 	bne	x22, x25, .LBB0_177
 
---- main .LBB0_179: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_179: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -766,7 +766,7 @@
 	addi	x19, x19, 4
 	bne	x22, x15, .LBB0_179
 
---- main .LBB0_181: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_181: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -775,7 +775,7 @@
 	addi	x19, x19, 4
 	bne	x22, x10, .LBB0_181
 
---- main .LBB0_183: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_183: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x17, 0(x19)
 	lw	x5, 0(x22)
 	addi	x22, x22, 4
@@ -784,7 +784,7 @@
 	addi	x19, x19, 4
 	bne	x22, x13, .LBB0_183
 
---- main .LBB0_187: 153 insns, 0 xr.mac, 0 xr.repeat, 64 lw, 1 sw, 0 mul
+--- main .LBB0_187: 153 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 64 lw, 1 sw, 0 mul
 	add	x7, x18, x10
 	addi	x18, x7, 2047
 	lui	x9, 1
@@ -939,7 +939,7 @@
 	sw	x11, 1424(x28)
 	bne	x10, x6, .LBB0_187
 
---- main .LBB0_190: 7 insns, 0 xr.mac, 0 xr.repeat, 2 lw, 0 sw, 1 mul
+--- main .LBB0_190: 7 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 2 lw, 0 sw, 1 mul
 	lw	x5, 0(x16)
 	lw	x6, 0(x17)
 	addi	x17, x17, 4
@@ -948,7 +948,7 @@
 	addi	x16, x16, 4
 	bne	x17, x12, .LBB0_190
 
---- main .LBB0_209: 5 insns, 0 xr.mac, 0 xr.repeat, 1 lw, 0 sw, 1 mul
+--- main .LBB0_209: 5 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 1 lw, 0 sw, 1 mul
 	lw	x12, 0(x18)
 	addi	x18, x18, 4
 	xor	x10, x12, x10
@@ -956,7 +956,7 @@
 	bne	x18, x11, .LBB0_209
 
 ============================== resnet8 / base_xrepeat: 51 innermost loops ==============================
---- main .LBB0_2: 20 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 3 sw, 3 mul
+--- main .LBB0_2: 20 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 3 sw, 3 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	slli	x5, x11, 8
@@ -978,7 +978,7 @@
 	addi	x17, x17, 12
 	bne	x17, x16, .LBB0_2
 
---- main .LBB0_5: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_5: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -994,7 +994,7 @@
 	addi	x10, x10, 4
 	bne	x10, x13, .LBB0_5
 
---- main .LBB0_7: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_7: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1010,7 +1010,7 @@
 	addi	x12, x12, 4
 	bne	x12, x10, .LBB0_7
 
---- main .LBB0_9: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_9: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1026,7 +1026,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_9
 
---- main .LBB0_11: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_11: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1042,7 +1042,7 @@
 	addi	x10, x10, 4
 	bne	x10, x12, .LBB0_11
 
---- main .LBB0_13: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_13: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1058,7 +1058,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_13
 
---- main .LBB0_15: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_15: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1074,7 +1074,7 @@
 	addi	x12, x12, 4
 	bne	x12, x10, .LBB0_15
 
---- main .LBB0_17: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_17: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1090,7 +1090,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_17
 
---- main .LBB0_19: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_19: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1106,7 +1106,7 @@
 	addi	x10, x10, 4
 	bne	x10, x12, .LBB0_19
 
---- main .LBB0_21: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_21: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1122,7 +1122,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_21
 
---- main .LBB0_23: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_23: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1138,7 +1138,7 @@
 	addi	x12, x12, 4
 	bne	x12, x13, .LBB0_23
 
---- main .LBB0_25: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_25: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1154,7 +1154,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_25
 
---- main .LBB0_27: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_27: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1170,7 +1170,7 @@
 	addi	x13, x13, 4
 	bne	x13, x10, .LBB0_27
 
---- main .LBB0_29: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_29: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1186,7 +1186,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_29
 
---- main .LBB0_31: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_31: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1202,7 +1202,7 @@
 	addi	x10, x10, 4
 	bne	x10, x12, .LBB0_31
 
---- main .LBB0_33: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_33: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1218,7 +1218,7 @@
 	addi	x10, x10, 4
 	bne	x10, x14, .LBB0_33
 
---- main .LBB0_35: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_35: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1234,7 +1234,7 @@
 	addi	x12, x12, 4
 	bne	x12, x10, .LBB0_35
 
---- main .LBB0_37: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_37: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x15, x11, 16
@@ -1250,7 +1250,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_37
 
---- main .LBB0_39: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_39: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x13, x11, 16
@@ -1266,7 +1266,7 @@
 	addi	x10, x10, 4
 	bne	x10, x16, .LBB0_39
 
---- main .LBB0_41: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_41: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x11, x11, x18
 	add	x11, x11, x9
 	srli	x14, x11, 16
@@ -1282,7 +1282,7 @@
 	addi	x10, x10, 4
 	bne	x10, x13, .LBB0_41
 
---- main .LBB0_91: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_91: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1293,7 +1293,7 @@
 	addi	x17, x17, 32
 	bne	x22, x18, .LBB0_91
 
---- main .LBB0_93: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_93: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1304,7 +1304,7 @@
 	addi	x17, x17, 32
 	bne	x22, x16, .LBB0_93
 
---- main .LBB0_95: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_95: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1315,7 +1315,7 @@
 	addi	x17, x17, 32
 	bne	x22, x6, .LBB0_95
 
---- main .LBB0_97: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_97: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1326,7 +1326,7 @@
 	addi	x17, x17, 32
 	bne	x22, x1, .LBB0_97
 
---- main .LBB0_99: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_99: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1337,7 +1337,7 @@
 	addi	x17, x17, 32
 	bne	x22, x5, .LBB0_99
 
---- main .LBB0_101: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_101: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1348,7 +1348,7 @@
 	addi	x17, x17, 32
 	bne	x22, x23, .LBB0_101
 
---- main .LBB0_103: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_103: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1359,7 +1359,7 @@
 	addi	x17, x17, 32
 	bne	x22, x23, .LBB0_103
 
---- main .LBB0_105: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_105: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1370,7 +1370,7 @@
 	addi	x17, x17, 32
 	bne	x22, x19, .LBB0_105
 
---- main .LBB0_107: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_107: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x17)
 	xr.repeat	1, x20, x21
 	lw	x24, 0(x22)
@@ -1381,7 +1381,7 @@
 	addi	x17, x17, 32
 	bne	x22, x5, .LBB0_107
 
---- main .LBB0_117: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_117: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x16, 0(x6)
@@ -1392,7 +1392,7 @@
 	addi	x30, x30, 32
 	bne	x6, x25, .LBB0_117
 
---- main .LBB0_119: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_119: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1403,7 +1403,7 @@
 	addi	x30, x30, 32
 	bne	x6, x24, .LBB0_119
 
---- main .LBB0_121: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_121: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1414,7 +1414,7 @@
 	addi	x30, x30, 32
 	bne	x6, x5, .LBB0_121
 
---- main .LBB0_123: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_123: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1425,7 +1425,7 @@
 	addi	x30, x30, 32
 	bne	x6, x27, .LBB0_123
 
---- main .LBB0_125: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_125: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1436,7 +1436,7 @@
 	addi	x30, x30, 32
 	bne	x6, x26, .LBB0_125
 
---- main .LBB0_127: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_127: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1447,7 +1447,7 @@
 	addi	x30, x30, 32
 	bne	x6, x7, .LBB0_127
 
---- main .LBB0_129: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_129: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1458,7 +1458,7 @@
 	addi	x30, x30, 32
 	bne	x6, x7, .LBB0_129
 
---- main .LBB0_131: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_131: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1469,7 +1469,7 @@
 	addi	x30, x30, 32
 	bne	x6, x1, .LBB0_131
 
---- main .LBB0_133: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_133: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x30)
 	xr.repeat	1, x29, x31
 	lw	x8, 0(x6)
@@ -1480,7 +1480,7 @@
 	addi	x30, x30, 32
 	bne	x6, x1, .LBB0_133
 
---- main .LBB0_143: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_143: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x8, 0(x20)
 	xr.repeat	1, x7, x16
 	lw	x24, 0(x21)
@@ -1491,7 +1491,7 @@
 	addi	x20, x20, 32
 	bne	x21, x6, .LBB0_143
 
---- main .LBB0_155: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_155: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x1)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x27)
@@ -1502,7 +1502,7 @@
 	addi	x1, x1, 32
 	bne	x27, x6, .LBB0_155
 
---- main .LBB0_157: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_157: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1513,7 +1513,7 @@
 	addi	x27, x27, 32
 	bne	x1, x30, .LBB0_157
 
---- main .LBB0_159: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_159: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1524,7 +1524,7 @@
 	addi	x27, x27, 32
 	bne	x1, x5, .LBB0_159
 
---- main .LBB0_161: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_161: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1535,7 +1535,7 @@
 	addi	x27, x27, 32
 	bne	x1, x26, .LBB0_161
 
---- main .LBB0_163: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_163: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1546,7 +1546,7 @@
 	addi	x27, x27, 32
 	bne	x1, x7, .LBB0_163
 
---- main .LBB0_165: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_165: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1557,7 +1557,7 @@
 	addi	x27, x27, 32
 	bne	x1, x31, .LBB0_165
 
---- main .LBB0_167: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_167: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1568,7 +1568,7 @@
 	addi	x27, x27, 32
 	bne	x1, x31, .LBB0_167
 
---- main .LBB0_169: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_169: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1579,7 +1579,7 @@
 	addi	x27, x27, 32
 	bne	x1, x24, .LBB0_169
 
---- main .LBB0_171: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_171: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x16, 0(x27)
 	xr.repeat	1, x29, x28
 	lw	x8, 0(x1)
@@ -1590,7 +1590,7 @@
 	addi	x27, x27, 32
 	bne	x1, x24, .LBB0_171
 
---- main .LBB0_175: 152 insns, 0 xr.mac, 0 xr.repeat, 64 lw, 1 sw, 0 mul
+--- main .LBB0_175: 152 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 64 lw, 1 sw, 0 mul
 	add	x7, x16, x10
 	addi	x18, x7, 2047
 	lui	x9, 1
@@ -1744,7 +1744,7 @@
 	sw	x11, 1424(x28)
 	bne	x10, x6, .LBB0_175
 
---- main .LBB0_178: 9 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_178: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x24, 0(x5)
 	xr.repeat	1, x20, x19
 	lw	x8, 0(x6)
@@ -1755,15 +1755,823 @@
 	addi	x5, x5, 32
 	bne	x6, x21, .LBB0_178
 
---- main .LBB0_197: 5 insns, 0 xr.mac, 0 xr.repeat, 1 lw, 0 sw, 1 mul
+--- main .LBB0_197: 5 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 1 lw, 0 sw, 1 mul
 	lw	x12, 0(x13)
 	addi	x13, x13, 4
 	xor	x10, x12, x10
 	mul	x10, x10, x8
 	bne	x13, x11, .LBB0_197
 
+============================== resnet8 / base_vrf: 51 innermost loops ==============================
+--- main .LBB0_2: 20 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 3 sw, 3 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	slli	x5, x11, 8
+	mul	x11, x11, x18
+	srli	x5, x5, 24
+	add	x11, x11, x9
+	addi	x5, x5, -128
+	slli	x6, x11, 8
+	mul	x11, x11, x18
+	srli	x6, x6, 24
+	add	x11, x11, x9
+	addi	x6, x6, -128
+	slli	x7, x11, 8
+	srli	x7, x7, 24
+	addi	x7, x7, -128
+	sw	x5, -8(x17)
+	sw	x6, -4(x17)
+	sw	x7, 0(x17)
+	addi	x17, x17, 12
+	bne	x17, x16, .LBB0_2
+
+--- main .LBB0_5: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x12
+	srli	x15, x15, 18
+	slli	x16, x15, 2
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -2
+	sw	x14, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x13, .LBB0_5
+
+--- main .LBB0_7: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x13
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x10, .LBB0_7
+
+--- main .LBB0_9: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x13
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x14, .LBB0_9
+
+--- main .LBB0_11: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x13
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x12, .LBB0_11
+
+--- main .LBB0_13: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x13
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x14, .LBB0_13
+
+--- main .LBB0_15: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x13
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x10, .LBB0_15
+
+--- main .LBB0_17: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x13
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x14, .LBB0_17
+
+--- main .LBB0_19: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x13
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x12, .LBB0_19
+
+--- main .LBB0_21: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x13
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x14, .LBB0_21
+
+--- main .LBB0_23: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x10
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x13, .LBB0_23
+
+--- main .LBB0_25: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x12
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x14, .LBB0_25
+
+--- main .LBB0_27: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x12
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x13)
+	addi	x13, x13, 4
+	bne	x13, x10, .LBB0_27
+
+--- main .LBB0_29: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x13
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x14, .LBB0_29
+
+--- main .LBB0_31: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x13
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x12, .LBB0_31
+
+--- main .LBB0_33: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x13
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x14, .LBB0_33
+
+--- main .LBB0_35: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x13
+	srli	x15, x15, 21
+	slli	x16, x15, 7
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -64
+	sw	x14, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x10, .LBB0_35
+
+--- main .LBB0_37: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x15, x11, 16
+	mul	x16, x15, x13
+	srli	x16, x16, 18
+	slli	x17, x16, 2
+	sub	x15, x15, x16
+	sub	x15, x15, x17
+	slli	x15, x15, 16
+	srli	x15, x15, 16
+	addi	x15, x15, -2
+	sw	x15, 0(x12)
+	addi	x12, x12, 4
+	bne	x12, x14, .LBB0_37
+
+--- main .LBB0_39: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x13, x11, 16
+	mul	x14, x13, x12
+	srli	x14, x14, 21
+	slli	x15, x14, 7
+	sub	x13, x13, x14
+	sub	x13, x13, x15
+	slli	x13, x13, 16
+	srli	x13, x13, 16
+	addi	x13, x13, -64
+	sw	x13, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x16, .LBB0_39
+
+--- main .LBB0_41: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+	mul	x11, x11, x18
+	add	x11, x11, x9
+	srli	x14, x11, 16
+	mul	x15, x14, x12
+	srli	x15, x15, 18
+	slli	x16, x15, 2
+	sub	x14, x14, x15
+	sub	x14, x14, x16
+	slli	x14, x14, 16
+	srli	x14, x14, 16
+	addi	x14, x14, -2
+	sw	x14, 0(x10)
+	addi	x10, x10, 4
+	bne	x10, x13, .LBB0_41
+
+--- main .LBB0_91: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x8, .LBB0_91
+
+--- main .LBB0_93: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x23, .LBB0_93
+
+--- main .LBB0_95: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x30, .LBB0_95
+
+--- main .LBB0_97: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x14, .LBB0_97
+
+--- main .LBB0_99: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x26, .LBB0_99
+
+--- main .LBB0_101: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x25, .LBB0_101
+
+--- main .LBB0_103: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x24, .LBB0_103
+
+--- main .LBB0_105: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x16, .LBB0_105
+
+--- main .LBB0_107: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x31, 7
+	flw	f24, 0(x22)
+	xr.repeat	1, x31, 7
+	addi	x22, x22, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x22, x13, .LBB0_107
+
+--- main .LBB0_117: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x22, .LBB0_117
+
+--- main .LBB0_119: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x9, .LBB0_119
+
+--- main .LBB0_121: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x11, .LBB0_121
+
+--- main .LBB0_123: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x12, .LBB0_123
+
+--- main .LBB0_125: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x10, .LBB0_125
+
+--- main .LBB0_127: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x13, .LBB0_127
+
+--- main .LBB0_129: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x8, .LBB0_129
+
+--- main .LBB0_131: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x15, .LBB0_131
+
+--- main .LBB0_133: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x30)
+	xr.repeat	1, x18, 7
+	flw	f24, 0(x21)
+	xr.repeat	1, x18, 7
+	addi	x21, x21, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x30, x30, 32
+	bne	x21, x14, .LBB0_133
+
+--- main .LBB0_143: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x18)
+	xr.repeat	1, x13, 7
+	flw	f24, 0(x19)
+	xr.repeat	1, x13, 7
+	addi	x19, x19, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x18, x18, 32
+	bne	x19, x30, .LBB0_143
+
+--- main .LBB0_155: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x29, .LBB0_155
+
+--- main .LBB0_157: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x8, .LBB0_157
+
+--- main .LBB0_159: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x25, .LBB0_159
+
+--- main .LBB0_161: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x7, .LBB0_161
+
+--- main .LBB0_163: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x26, .LBB0_163
+
+--- main .LBB0_165: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x27, .LBB0_165
+
+--- main .LBB0_167: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x17, .LBB0_167
+
+--- main .LBB0_169: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x15, .LBB0_169
+
+--- main .LBB0_171: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x20)
+	xr.repeat	1, x28, 7
+	flw	f24, 0(x23)
+	xr.repeat	1, x28, 7
+	addi	x23, x23, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x20, x20, 32
+	bne	x23, x13, .LBB0_171
+
+--- main .LBB0_175: 153 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 64 lw, 1 sw, 0 mul
+	add	x7, x21, x10
+	addi	x18, x7, 2047
+	lui	x9, 1
+	add	x9, x7, x9
+	lui	x28, 2
+	add	x28, x7, x28
+	add	x29, x7, x15
+	add	x31, x7, x16
+	add	x30, x7, x17
+	add	x8, x7, x5
+	addi	x19, x18, 769
+	lw	x20, 769(x18)
+	lw	x18, 1025(x18)
+	lw	x21, 1280(x9)
+	lw	x22, 1536(x9)
+	lw	x23, -1536(x28)
+	lw	x24, -1280(x28)
+	lw	x25, 512(x28)
+	lw	x26, 768(x28)
+	lw	x27, -256(x29)
+	lw	x1, 0(x29)
+	lw	x11, 512(x31)
+	lw	x12, 768(x31)
+	add	x18, x18, x20
+	lw	x20, 0(x30)
+	add	x21, x21, x22
+	lw	x22, 256(x30)
+	add	x23, x23, x24
+	lw	x24, -1024(x8)
+	add	x25, x25, x26
+	lw	x26, -768(x8)
+	add	x27, x27, x1
+	lw	x1, 512(x19)
+	add	x11, x11, x12
+	lw	x12, 768(x19)
+	add	x20, x20, x22
+	lw	x22, 1024(x19)
+	add	x24, x24, x26
+	lw	x26, 1280(x19)
+	add	x18, x18, x1
+	lw	x1, 1536(x19)
+	lw	x9, 1792(x9)
+	add	x12, x12, x22
+	lw	x22, -1024(x28)
+	add	x26, x26, x1
+	lw	x1, 1024(x28)
+	add	x21, x21, x9
+	lw	x9, 256(x29)
+	add	x22, x23, x22
+	lw	x23, 1024(x31)
+	add	x25, x25, x1
+	lw	x1, 512(x30)
+	add	x27, x27, x9
+	add	x11, x11, x23
+	lw	x23, -512(x8)
+	add	x20, x20, x1
+	slli	x9, x13, 11
+	add	x9, x7, x9
+	lw	x19, 1792(x19)
+	add	x23, x24, x23
+	lw	x24, -2048(x28)
+	add	x12, x18, x12
+	lw	x18, -256(x28)
+	add	x19, x26, x19
+	lw	x26, 1280(x28)
+	add	x21, x21, x24
+	lw	x24, 512(x29)
+	add	x18, x22, x18
+	lw	x22, 1280(x31)
+	add	x25, x25, x26
+	lw	x26, 768(x30)
+	add	x24, x27, x24
+	lw	x27, -1792(x9)
+	add	x11, x11, x22
+	add	x20, x20, x26
+	lw	x22, -1792(x28)
+	add	x23, x23, x27
+	lw	x26, 0(x28)
+	add	x12, x12, x19
+	lw	x19, 1536(x28)
+	add	x21, x21, x22
+	lw	x22, 768(x29)
+	add	x18, x18, x26
+	lw	x26, 1536(x31)
+	add	x19, x25, x19
+	add	x22, x24, x22
+	lw	x24, 1024(x30)
+	add	x11, x11, x26
+	lw	x25, -1536(x9)
+	lw	x28, 256(x28)
+	add	x20, x20, x24
+	lw	x24, -768(x29)
+	add	x23, x23, x25
+	lw	x25, 1024(x29)
+	add	x12, x12, x21
+	lw	x21, 1792(x31)
+	add	x28, x18, x28
+	lw	x18, 1792(x30)
+	add	x19, x19, x24
+	lw	x24, -1280(x9)
+	add	x22, x22, x25
+	add	x11, x11, x21
+	add	x18, x20, x18
+	lui	x20, %hi(.L_MergedGlobals)
+	addi	x20, x20, %lo(.L_MergedGlobals)
+	add	x23, x23, x24
+	lw	x29, -512(x29)
+	lw	x31, 0(x31)
+	add	x12, x12, x28
+	lw	x28, -768(x30)
+	add	x29, x19, x29
+	lw	x19, -2048(x8)
+	add	x31, x22, x31
+	lui	x21, %hi(y3)
+	addi	x21, x21, %lo(y3)
+	add	x11, x11, x28
+	lw	x28, -1024(x9)
+	add	x18, x18, x19
+	add	x7, x7, x14
+	lw	x7, 1024(x7)
+	add	x28, x23, x28
+	lw	x19, -512(x30)
+	add	x12, x12, x29
+	lw	x29, -1792(x8)
+	add	x7, x31, x7
+	lw	x31, -768(x9)
+	add	x11, x11, x19
+	add	x29, x18, x29
+	lw	x30, -256(x30)
+	add	x28, x28, x31
+	lw	x31, -1536(x8)
+	add	x12, x12, x7
+	lw	x7, -512(x9)
+	add	x11, x11, x30
+	add	x29, x29, x31
+	lw	x30, -1280(x8)
+	add	x7, x28, x7
+	lw	x28, -256(x9)
+	add	x11, x12, x11
+	add	x29, x29, x30
+	lw	x12, 0(x9)
+	add	x7, x7, x28
+	add	x28, x20, x10
+	add	x11, x11, x29
+	add	x12, x7, x12
+	add	x11, x11, x12
+	srai	x12, x11, 31
+	srli	x12, x12, 26
+	add	x11, x11, x12
+	srai	x11, x11, 6
+	addi	x10, x10, 4
+	sw	x11, 1424(x28)
+	bne	x10, x6, .LBB0_175
+
+--- main .LBB0_178: 9 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f0, 0(x16)
+	xr.repeat	1, x12, 7
+	flw	f24, 0(x17)
+	xr.repeat	1, x12, 7
+	addi	x17, x17, 32
+	xr.mac	f15, f24, f0, f15
+	xr.repeat	6, x0, 7
+	addi	x16, x16, 32
+	bne	x17, x13, .LBB0_178
+
+--- main .LBB0_197: 5 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 1 lw, 0 sw, 1 mul
+	lw	x12, 0(x21)
+	addi	x21, x21, 4
+	xor	x10, x12, x10
+	mul	x10, x10, x8
+	bne	x21, x11, .LBB0_197
+
 ============================== resnet8 / hand: 27 innermost loops ==============================
---- main .LBB0_2: 20 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 3 sw, 3 mul
+--- main .LBB0_2: 20 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 3 sw, 3 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	slli	x6, x10, 8
@@ -1785,7 +2593,7 @@
 	addi	x5, x5, 12
 	bne	x5, x17, .LBB0_2
 
---- main .LBB0_5: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_5: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -1801,7 +2609,7 @@
 	addi	x11, x11, 4
 	bne	x11, x13, .LBB0_5
 
---- main .LBB0_7: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_7: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -1817,7 +2625,7 @@
 	addi	x12, x12, 4
 	bne	x12, x11, .LBB0_7
 
---- main .LBB0_9: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_9: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -1833,7 +2641,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_9
 
---- main .LBB0_11: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_11: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -1849,7 +2657,7 @@
 	addi	x11, x11, 4
 	bne	x11, x12, .LBB0_11
 
---- main .LBB0_13: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_13: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -1865,7 +2673,7 @@
 	addi	x11, x11, 4
 	bne	x11, x14, .LBB0_13
 
---- main .LBB0_15: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_15: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -1881,7 +2689,7 @@
 	addi	x12, x12, 4
 	bne	x12, x11, .LBB0_15
 
---- main .LBB0_17: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_17: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -1897,7 +2705,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_17
 
---- main .LBB0_19: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_19: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -1913,7 +2721,7 @@
 	addi	x11, x11, 4
 	bne	x11, x12, .LBB0_19
 
---- main .LBB0_21: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_21: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -1929,7 +2737,7 @@
 	addi	x11, x11, 4
 	bne	x11, x14, .LBB0_21
 
---- main .LBB0_23: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_23: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -1945,7 +2753,7 @@
 	addi	x12, x12, 4
 	bne	x12, x13, .LBB0_23
 
---- main .LBB0_25: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_25: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -1961,7 +2769,7 @@
 	addi	x11, x11, 4
 	bne	x11, x14, .LBB0_25
 
---- main .LBB0_27: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_27: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -1977,7 +2785,7 @@
 	addi	x13, x13, 4
 	bne	x13, x11, .LBB0_27
 
---- main .LBB0_29: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_29: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -1993,7 +2801,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_29
 
---- main .LBB0_31: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_31: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -2009,7 +2817,7 @@
 	addi	x11, x11, 4
 	bne	x11, x12, .LBB0_31
 
---- main .LBB0_33: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_33: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -2025,7 +2833,7 @@
 	addi	x11, x11, 4
 	bne	x11, x14, .LBB0_33
 
---- main .LBB0_35: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_35: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -2041,7 +2849,7 @@
 	addi	x12, x12, 4
 	bne	x12, x11, .LBB0_35
 
---- main .LBB0_37: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_37: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x15, x10, 16
@@ -2057,7 +2865,7 @@
 	addi	x12, x12, 4
 	bne	x12, x14, .LBB0_37
 
---- main .LBB0_39: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_39: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x13, x10, 16
@@ -2073,7 +2881,7 @@
 	addi	x11, x11, 4
 	bne	x11, x17, .LBB0_39
 
---- main .LBB0_41: 14 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 2 mul
+--- main .LBB0_41: 14 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 2 mul
 	mul	x10, x10, x18
 	add	x10, x10, x8
 	srli	x14, x10, 16
@@ -2089,7 +2897,7 @@
 	addi	x11, x11, 4
 	bne	x11, x13, .LBB0_41
 
---- main .LBB0_50: 153 insns, 0 xr.mac, 0 xr.repeat, 64 lw, 1 sw, 0 mul
+--- main .LBB0_50: 153 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 64 lw, 1 sw, 0 mul
 	add	x5, x8, x10
 	slli	x7, x13, 10
 	addi	x28, x14, 768
@@ -2244,7 +3052,7 @@
 	sw	x11, 1424(x28)
 	bne	x10, x17, .LBB0_50
 
---- main .LBB0_53: 10 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_53: 10 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x24, 0(x1)
 	xr.repeat	1, x12, x13
 	addi	x7, x7, 8
@@ -2256,28 +3064,28 @@
 	addi	x1, x1, 32
 	bltu	x7, x14, .LBB0_53
 
---- main .LBB0_72: 5 insns, 0 xr.mac, 0 xr.repeat, 1 lw, 0 sw, 1 mul
+--- main .LBB0_72: 5 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 1 lw, 0 sw, 1 mul
 	lw	x12, 0(x8)
 	addi	x8, x8, 4
 	xor	x10, x12, x10
 	mul	x10, x10, x9
 	bne	x8, x11, .LBB0_72
 
---- conv .LBB1_8: 5 insns, 0 xr.mac, 0 xr.repeat, 1 lw, 1 sw, 0 mul
+--- conv .LBB1_8: 5 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 1 lw, 1 sw, 0 mul
 	lw	x29, 0(x28)
 	sw	x29, 0(x5)
 	addi	x5, x5, 4
 	addi	x28, x28, 4
 	bne	x5, x7, .LBB1_8
 
---- conv .LBB1_12: 5 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 0 mul
+--- conv .LBB1_12: 5 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 0 mul
 	slli	x13, x10, 2
 	add	x13, x30, x13
 	addi	x10, x10, 1
 	sw	x0, 0(x13)
 	bltu	x10, x15, .LBB1_12
 
---- conv .LBB1_17: 10 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- conv .LBB1_17: 10 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x24, 0(x13)
 	xr.repeat	1, x1, x6
 	addi	x10, x10, 8
@@ -2289,7 +3097,7 @@
 	addi	x13, x13, 32
 	bltu	x10, x15, .LBB1_17
 
---- conv .LBB1_21: 10 insns, 1 xr.mac, 3 xr.repeat, 2 lw, 0 sw, 0 mul
+--- conv .LBB1_21: 10 insns, 1 xr.mac, 0 other repeated, 3 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x24, 0(x13)
 	xr.repeat	1, x1, x6
 	addi	x10, x10, 8

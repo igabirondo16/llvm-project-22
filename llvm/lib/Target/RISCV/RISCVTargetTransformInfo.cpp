@@ -375,10 +375,13 @@ bool RISCVTTIImpl::shouldExpandReduction(const IntrinsicInst *II) const {
 }
 
 bool RISCVTTIImpl::preferInLoopReduction(RecurKind Kind, Type *Ty) const {
-  // XRepeat: an i32 add reduction done in the loop, acc += reduce.add(a * b),
-  // is a single MAC that accumulates into the scalar (REPEAT mask 0110),
-  // and keeps a vector register free.
-  return hasXRepeatVectors() && Kind == RecurKind::Add && Ty->isIntegerTy(32);
+  // XRepeat (both cores): an i32 add reduction done in the loop,
+  // acc += reduce.add(a * b), is a single MAC that accumulates into the scalar
+  // (REPEAT mask 0110), and keeps a vector register free. A vector
+  // accumulator would instead need building before the loop and reducing
+  // after it.
+  return (hasXRepeatVectors() || hasXRepeatVRFVectors()) &&
+         Kind == RecurKind::Add && Ty->isIntegerTy(32);
 }
 
 std::optional<InstructionCost>
@@ -392,6 +395,30 @@ RISCVTTIImpl::getXRepeatPairCost(Type *Ty) const {
   if (LT.second != MVT::v8i32 && LT.second != MVT::v4i32)
     return std::nullopt;
   return LT.first * 2;
+}
+
+std::optional<InstructionCost>
+RISCVTTIImpl::getXRFPairCost(Type *Ty) const {
+  // Only whole blocks of i32 or float: a shorter vector would be widened to
+  // one and cost as much, and narrower elements would be promoted (extended
+  // and truncated one by one).
+  if (!isXRepeatVRFVector(Ty) ||
+      cast<FixedVectorType>(Ty)->getNumElements() % 8 != 0 ||
+      !(Ty->getScalarType()->isIntegerTy(32) ||
+        Ty->getScalarType()->isFloatTy()))
+    return std::nullopt;
+  std::pair<InstructionCost, MVT> LT = getTypeLegalizationCost(Ty);
+  if (LT.second != MVT::v8i32 && LT.second != MVT::v8f32 &&
+      LT.second != MVT::v16i32 && LT.second != MVT::v16f32)
+    return std::nullopt;
+  return LT.first * 2;
+}
+
+bool RISCVTTIImpl::isXRF16Wide(Type *Ty) const {
+  if (!isXRepeatVRFVector(Ty))
+    return false;
+  MVT VT = getTypeLegalizationCost(Ty).second;
+  return VT == MVT::v16i32 || VT == MVT::v16f32;
 }
 
 std::optional<unsigned> RISCVTTIImpl::getMaxVScale() const {
@@ -418,7 +445,10 @@ RISCVTTIImpl::getRegisterBitWidth(TargetTransformInfo::RegisterKind K) const {
   case TargetTransformInfo::RGK_FixedWidthVector:
     if (ST->useRVVForFixedLengthVectors())
       return TypeSize::getFixed(LMUL * ST->getRealMinVLen());
-    // XRepeat: a block of 8 x i32 (the widest; 4 x i32 blocks are also legal).
+    // XRepeat: a block of 16 x 32 bits (VRF; 8-wide blocks are also legal),
+    // or of 8 x i32 (GPRs; 4 x i32 blocks are also legal).
+    if (hasXRepeatVRFVectors())
+      return TypeSize::getFixed(512);
     return TypeSize::getFixed(hasXRepeatVectors() ? 256 : 0);
   case TargetTransformInfo::RGK_ScalableVector:
     return TypeSize::getScalable(
@@ -703,6 +733,19 @@ RISCVTTIImpl::getShuffleCost(TTI::ShuffleKind Kind, VectorType *DstTy,
          "Expected the Mask to match the return size if given");
   assert(SrcTy->getScalarType() == DstTy->getScalarType() &&
          "Expected the same scalar types");
+
+  if (isXRepeatVRFVector(SrcTy) || isXRepeatVRFVector(DstTy)) {
+    // A splat is a fixed field of the instructions that read it: the scalar
+    // in one F register (one xr.mv.vx for an i32). Other shuffles are
+    // scalarized.
+    Kind = improveShuffleKindFromMask(Kind, Mask, SrcTy, Index, SubTp);
+    if (Kind == TTI::SK_Broadcast && getXRFPairCost(DstTy))
+      return 1;
+    if (CostKind == TTI::TCK_RecipThroughput)
+      return InstructionCost::getInvalid();
+    return BaseT::getShuffleCost(Kind, DstTy, SrcTy, Mask, CostKind, Index,
+                                 SubTp);
+  }
 
   if (isXRepeatVector(SrcTy) || isXRepeatVector(DstTy)) {
     // A splat is a MAC of the scalar by 1; other shuffles are scalarized.
@@ -1032,7 +1075,7 @@ InstructionCost RISCVTTIImpl::getScalarizationOverhead(
   if (isa<ScalableVectorType>(Ty))
     return InstructionCost::getInvalid();
 
-  if (isXRepeatVector(Ty))
+  if (isXRepeatVector(Ty) || isXRepeatVRFVector(Ty))
     return BaseT::getScalarizationOverhead(Ty, DemandedElts, Insert, Extract,
                                            CostKind, ForPoisonSrc, VL);
 
@@ -1081,7 +1124,7 @@ RISCVTTIImpl::getMemIntrinsicInstrCost(const MemIntrinsicCostAttributes &MICA,
   Align Alignment = MICA.getAlignment();
   // XRepeat supports strided loads and stores (see getStridedMemoryOpCost);
   // every other memory intrinsic on its vectors is unsupported.
-  if (isXRepeatVector(DataTy) &&
+  if ((isXRepeatVector(DataTy) || isXRepeatVRFVector(DataTy)) &&
       (MICA.getID() == Intrinsic::experimental_vp_strided_load ||
        MICA.getID() == Intrinsic::experimental_vp_strided_store))
     return getStridedMemoryOpCost(MICA, CostKind);
@@ -1137,6 +1180,29 @@ InstructionCost RISCVTTIImpl::getInterleavedMemoryOpCost(
     unsigned Opcode, Type *VecTy, unsigned Factor, ArrayRef<unsigned> Indices,
     Align Alignment, unsigned AddressSpace, TTI::TargetCostKind CostKind,
     bool UseMaskForCond, bool UseMaskForGaps) const {
+  // XRepeat (VRF core): each field of an interleaved load or store is a
+  // strided flw/fsw + REPEAT with stride Factor * 4
+  // (lowerXRepeatInterleaved{Load,Store}): one pair per field the group uses.
+  // A store must write every field (gaps would need a mask).
+  if (isXRepeatVRFVector(VecTy)) {
+    auto *FVTy = cast<FixedVectorType>(VecTy);
+    if (!UseMaskForCond && !UseMaskForGaps && Factor >= 2 &&
+        Factor <= TLI->getMaxSupportedInterleaveFactor() &&
+        Alignment >= Align(4) && FVTy->getNumElements() % Factor == 0 &&
+        (Opcode == Instruction::Load || Indices.empty() ||
+         Indices.size() == Factor)) {
+      auto *FieldTy = FixedVectorType::get(FVTy->getElementType(),
+                                           FVTy->getNumElements() / Factor);
+      // Each field must be exactly one block, as the lowering requires.
+      std::optional<InstructionCost> Pair = getXRFPairCost(FieldTy);
+      if (Pair && (FieldTy->getNumElements() == 8 ||
+                   FieldTy->getNumElements() == 16)) {
+        unsigned NumFields = Indices.empty() ? Factor : Indices.size();
+        return NumFields * *Pair;
+      }
+    }
+    return InstructionCost::getInvalid();
+  }
   // XRepeat: each field of an interleaved load is a strided load, LW + REPEAT
   // with stride Factor * 4 (lowerXRepeatInterleavedLoad), so the group costs
   // one LW + REPEAT per field it uses. Masked groups and interleaved stores
@@ -1333,9 +1399,9 @@ RISCVTTIImpl::getStridedMemoryOpCost(const MemIntrinsicCostAttributes &MICA,
   const Instruction *I = MICA.getInst();
 
   // XRepeat: a strided load is LW + REPEAT and a strided store one SW per
-  // element, exactly like the contiguous ones; only the stride register
-  // differs.
-  if (isXRepeatVector(DataTy)) {
+  // element (VRF core: flw/fsw + REPEAT), exactly like the contiguous ones;
+  // only the stride register differs.
+  if (isXRepeatVector(DataTy) || isXRepeatVRFVector(DataTy)) {
     if (!isLegalStridedLoadStore(DataTy, Alignment))
       return isUnsupportedXRepeatOp(DataTy, CostKind)
                  ? InstructionCost::getInvalid()
@@ -1451,6 +1517,35 @@ InstructionCost
 RISCVTTIImpl::getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
                                     TTI::TargetCostKind CostKind) const {
   auto *RetTy = ICA.getReturnType();
+  // XRepeat VRF: fmuladd/fma are fmadd.s + REPEAT (a 16-wide fmuladd is an
+  // fmul and an fadd, and a 16-wide fma of two vectors is scalarized), and
+  // add reductions accumulate into one F register.
+  if (isXRepeatVRFVector(RetTy) ||
+      any_of(ICA.getArgTypes(),
+             [&](Type *Ty) { return isXRepeatVRFVector(Ty); })) {
+    switch (ICA.getID()) {
+    case Intrinsic::fmuladd:
+    case Intrinsic::fma:
+      if (std::optional<InstructionCost> Cost = getXRFPairCost(RetTy)) {
+        if (!isXRF16Wide(RetTy))
+          return *Cost;
+        if (ICA.getID() == Intrinsic::fmuladd)
+          return *Cost * 2;
+      }
+      break;
+    case Intrinsic::vector_reduce_add:
+    case Intrinsic::vector_reduce_fadd:
+    // Strided loads and stores: getMemIntrinsicInstrCost, through BaseT.
+    case Intrinsic::experimental_vp_strided_load:
+    case Intrinsic::experimental_vp_strided_store:
+      return BaseT::getIntrinsicInstrCost(ICA, CostKind);
+    default:
+      break;
+    }
+    if (CostKind == TTI::TCK_RecipThroughput)
+      return InstructionCost::getInvalid();
+    return BaseT::getIntrinsicInstrCost(ICA, CostKind);
+  }
   // XRepeat: of the vector intrinsics, only reduce.add is supported.
   if (ICA.getID() != Intrinsic::vector_reduce_add &&
       (isUnsupportedXRepeatOp(RetTy, CostKind) ||
@@ -1816,6 +1911,16 @@ InstructionCost RISCVTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst,
     return 1; // Treat as single instruction cost for now
   }
 
+  if (isXRepeatVRFVector(Dst) || isXRepeatVRFVector(Src)) {
+    // The i32 and float vectors of a width share the registers.
+    if (Opcode == Instruction::BitCast && getXRFPairCost(Dst) &&
+        getXRFPairCost(Src))
+      return 0;
+    if (CostKind == TTI::TCK_RecipThroughput)
+      return InstructionCost::getInvalid();
+    return BaseT::getCastInstrCost(Opcode, Dst, Src, CCH, CostKind, I);
+  }
+
   if (isXRepeatVector(Dst) || isXRepeatVector(Src)) {
     if (CostKind == TTI::TCK_RecipThroughput)
       return InstructionCost::getInvalid();
@@ -2132,6 +2237,12 @@ InstructionCost
 RISCVTTIImpl::getArithmeticReductionCost(unsigned Opcode, VectorType *Ty,
                                          std::optional<FastMathFlags> FMF,
                                          TTI::TargetCostKind CostKind) const {
+  // XRepeat VRF: an add reduction is xr.add/fadd.s + REPEAT into one F
+  // register (in element order, so an ordered float sum too), plus moving
+  // the start value in and an i32 result out.
+  if (Opcode == Instruction::Add || Opcode == Instruction::FAdd)
+    if (std::optional<InstructionCost> Cost = getXRFPairCost(Ty))
+      return *Cost + 2;
   // XRepeat: an add reduction is a MAC by 1 that accumulates into a scalar.
   if (Opcode == Instruction::Add)
     if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Ty))
@@ -2259,7 +2370,12 @@ RISCVTTIImpl::getMulAccReductionCost(bool IsUnsigned, unsigned RedOpcode,
                                      Type *ResTy, VectorType *Ty,
                                      TTI::TargetCostKind CostKind) const {
   // XRepeat: reduce.add(mul(a, b)) without extensions is a single MAC that
-  // accumulates into a scalar.
+  // accumulates into a scalar (VRF: not 16 wide, where the two vectors and
+  // the accumulator don't fit in the F registers).
+  if (RedOpcode == Instruction::Add && ResTy == Ty->getElementType() &&
+      !isXRF16Wide(Ty))
+    if (std::optional<InstructionCost> Cost = getXRFPairCost(Ty))
+      return *Cost + 2;
   if (RedOpcode == Instruction::Add && ResTy == Ty->getElementType())
     if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Ty))
       return *Cost;
@@ -2330,6 +2446,9 @@ InstructionCost RISCVTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
                                               TTI::TargetCostKind CostKind,
                                               TTI::OperandValueInfo OpInfo,
                                               const Instruction *I) const {
+  // XRepeat VRF: a load or store is FLW/FSW + REPEAT.
+  if (std::optional<InstructionCost> Cost = getXRFPairCost(Src))
+    return *Cost;
   // XRepeat: a load is LW + REPEAT, but a store is one SW per element since
   // REPEAT can't repeat stores.
   if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Src))
@@ -2562,7 +2681,7 @@ InstructionCost RISCVTTIImpl::getVectorInstrCost(unsigned Opcode, Type *Val,
     return 1; // Treat as single instruction cost for now
   }
 
-  if (isXRepeatVector(Val))
+  if (isXRepeatVector(Val) || isXRepeatVRFVector(Val))
     return BaseT::getVectorInstrCost(Opcode, Val, CostKind, Index, Op0, Op1);
 
   if (Opcode != Instruction::ExtractElement &&
@@ -2732,6 +2851,32 @@ InstructionCost RISCVTTIImpl::getArithmeticInstrCost(
     TTI::OperandValueInfo Op1Info, TTI::OperandValueInfo Op2Info,
     ArrayRef<const Value *> Args, const Instruction *CxtI) const {
 
+  // XRepeat VRF: the integer ALU, MAC and fadd/fsub/fmul are one
+  // instruction + REPEAT. A 16-wide multiply of two vectors is scalarized (the
+  // MAC's zero addend doesn't fit next to them; lowerXRepeatVRFOperation):
+  // per element, both operands move to x registers, mul, and the result moves
+  // back. That is costed as such rather than as invalid: an invalid cost makes
+  // SLP give up on a horizontal reduction instead of retrying it 8 wide.
+  if (std::optional<InstructionCost> Cost = getXRFPairCost(Ty)) {
+    switch (Opcode) {
+    case Instruction::Add:
+    case Instruction::Sub:
+    case Instruction::And:
+    case Instruction::Or:
+    case Instruction::Xor:
+    case Instruction::Shl:
+    case Instruction::LShr:
+    case Instruction::AShr:
+    case Instruction::FAdd:
+    case Instruction::FSub:
+    case Instruction::FMul:
+      return *Cost;
+    case Instruction::Mul:
+      if (!isXRF16Wide(Ty) || Op1Info.isUniform() || Op2Info.isUniform())
+        return *Cost;
+      return 4 * cast<FixedVectorType>(Ty)->getNumElements();
+    }
+  }
   // XRepeat: add, sub, mul and shifts by a constant are a MAC + REPEAT.
   if (std::optional<InstructionCost> Cost = getXRepeatPairCost(Ty)) {
     switch (Opcode) {
@@ -2922,16 +3067,24 @@ InstructionCost RISCVTTIImpl::getPointersChainCost(
 
 // XRepeat: whether \p L is a small innermost loop that the loop vectorizer can
 // turn into whole XRepeat blocks: a constant trip count that is a multiple of
-// 4, and a body of only i32 add/sub/mul on loads with stride 1 or a
-// loop-invariant address, stored back with stride 1. Fully unrolling such a
-// loop before the vectorizer leaves only scalar code that SLP rarely recovers
-// (e.g. C[0..7] += A[k] * B[k][0..7] becomes 8 scalar accumulators).
-static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE) {
+// the narrowest block (4 for the GPR blocks, 8 for the VRF ones), and a body
+// of only i32 add/sub/mul (VRF: also and/or/xor/shifts, and fadd/fsub/fmul/
+// fmuladd on floats) on loads with stride 1 or a loop-invariant address,
+// stored back with stride 1. Fully unrolling such a loop before the vectorizer
+// leaves only scalar code that SLP rarely recovers (e.g. C[0..7] += A[k] *
+// B[k][0..7] becomes 8 scalar accumulators).
+static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE,
+                                           bool VRF) {
   if (!L->isInnermost() || !L->getLoopLatch() || !L->getExitingBlock())
     return false;
   unsigned TC = SE.getSmallConstantTripCount(L);
-  if (TC < 4 || TC % 4 != 0)
+  unsigned MinElts = VRF ? 8 : 4;
+  if (TC < MinElts || TC % MinElts != 0)
     return false;
+  // The element types the blocks hold.
+  auto IsEltTy = [&](const Type *Ty) {
+    return Ty->isIntegerTy(32) || (VRF && Ty->isFloatTy());
+  };
 
   // Stride 1 for i32 accesses is a step of 4 bytes per iteration.
   auto IsUnitStride = [&](const Value *Ptr) {
@@ -2949,7 +3102,7 @@ static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE) {
           I.isDebugOrPseudoInst())
         continue;
       if (const auto *LI = dyn_cast<LoadInst>(&I)) {
-        if (!LI->isSimple() || !LI->getType()->isIntegerTy(32))
+        if (!LI->isSimple() || !IsEltTy(LI->getType()))
           return false;
         const Value *Ptr = LI->getPointerOperand();
         if (!IsUnitStride(Ptr) && !L->isLoopInvariant(Ptr))
@@ -2957,18 +3110,36 @@ static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE) {
         continue;
       }
       if (const auto *SI = dyn_cast<StoreInst>(&I)) {
-        if (!SI->isSimple() ||
-            !SI->getValueOperand()->getType()->isIntegerTy(32) ||
+        if (!SI->isSimple() || !IsEltTy(SI->getValueOperand()->getType()) ||
             !IsUnitStride(SI->getPointerOperand()))
           return false;
         HasStore = true;
         continue;
       }
+      if (const auto *II = dyn_cast<IntrinsicInst>(&I);
+          VRF && II && II->getIntrinsicID() == Intrinsic::fmuladd &&
+          II->getType()->isFloatTy()) {
+        HasArith |= any_of(II->args(),
+                           [](const Value *V) { return isa<LoadInst>(V); });
+        continue;
+      }
+      bool IsVRFOp = false;
       switch (I.getOpcode()) {
+      case Instruction::And:
+      case Instruction::Or:
+      case Instruction::Xor:
+      case Instruction::Shl:
+      case Instruction::LShr:
+      case Instruction::AShr:
+      case Instruction::FAdd:
+      case Instruction::FSub:
+      case Instruction::FMul:
+        IsVRFOp = true;
+        [[fallthrough]];
       case Instruction::Add:
       case Instruction::Sub:
       case Instruction::Mul:
-        if (!I.getType()->isIntegerTy(32))
+        if (!IsEltTy(I.getType()) || (IsVRFOp && !VRF))
           return false;
         // Only arithmetic on loaded data counts, not the induction update.
         HasArith |= any_of(I.operand_values(),
@@ -2989,9 +3160,10 @@ void RISCVTTIImpl::getUnrollingPreferences(
   //       would apply to all settings below to enable performance.
 
   // XRepeat: don't unroll auto-vectorized loops at all, not even fully. With
-  // only three vector registers, the loads of an unrolled body get scheduled
-  // or hoisted ahead of their MACs and the blocks spill.
-  if (hasXRepeatVectors() &&
+  // only a few vector registers (three/six GPR blocks, four/two F-register
+  // blocks), the loads of an unrolled body get scheduled or hoisted ahead of
+  // their MACs and the blocks spill.
+  if ((hasXRepeatVectors() || hasXRepeatVRFVectors()) &&
       getBooleanLoopAttribute(L, "llvm.loop.isvectorized") &&
       any_of(L->blocks(), [](const BasicBlock *BB) {
         return any_of(*BB, [](const Instruction &I) {
@@ -3008,9 +3180,10 @@ void RISCVTTIImpl::getUnrollingPreferences(
   // XRepeat: keep small loops the loop vectorizer can turn into whole blocks
   // rolled until it has seen them (what #pragma clang loop unroll(disable)
   // does by hand). If the vectorizer still rejects the loop, it stays rolled.
-  if (XRepeatKeepSmallLoops && hasXRepeatVectors() &&
+  if (XRepeatKeepSmallLoops &&
+      (hasXRepeatVectors() || hasXRepeatVRFVectors()) &&
       !getBooleanLoopAttribute(L, "llvm.loop.isvectorized") &&
-      isXRepeatVectorizableSmallLoop(L, SE)) {
+      isXRepeatVectorizableSmallLoop(L, SE, hasXRepeatVRFVectors())) {
     UP.FullUnrollMaxCount = 0;
     return;
   }
@@ -3407,6 +3580,12 @@ unsigned RISCVTTIImpl::getRegUsageForType(Type *Ty) const {
     if (ST->useRVVForFixedLengthVectors())
       return divideCeil(Size, ST->getRealMinVLen());
 
+    // XRepeat VRF: an 8-F-register block is 1 unit, a 16-wide one 3 (see
+    // getNumberOfRegisters).
+    if (isXRepeatVRFVector(Ty)) {
+      unsigned Blocks = divideCeil(Size.getFixedValue(), 256);
+      return Blocks == 1 ? 1 : 3 * divideCeil(Blocks, 2);
+    }
     // XRepeat: counted in 4-GPR blocks (see getNumberOfRegisters).
     if (isXRepeatVector(Ty))
       return divideCeil(Size.getFixedValue(), 128);
@@ -3418,6 +3597,13 @@ unsigned RISCVTTIImpl::getRegUsageForType(Type *Ty) const {
 unsigned RISCVTTIImpl::getMaximumVF(unsigned ElemWidth, unsigned Opcode) const {
   if (SLPMaxVF.getNumOccurrences())
     return SLPMaxVF;
+
+  // XRepeat VRF: SLP doesn't check register pressure, and a 16-wide tree with
+  // two vectors plus a scalar can't be allocated without spilling (two 16-wide
+  // blocks fill the F registers). It builds 8-wide trees, which always fit;
+  // the loop vectorizer, which does check, can still pick 16.
+  if (hasXRepeatVRFVectors())
+    return std::max<unsigned>(1U, 256 / ElemWidth);
 
   // Return how many elements can fit in getRegisterBitwidth.  This is the
   // same routine as used in LoopVectorizer.  We should probably be
@@ -3653,6 +3839,37 @@ bool RISCVTTIImpl::isProfitableToSinkOperands(
         }
       }
     }
+  }
+
+  // XRepeat VRF: a splat operand is a fixed field of the repeated
+  // instruction, a single F register. Sink the splat next to its users so
+  // that instruction selection sees the scalar, not a whole block holding the
+  // splat (which the vectorizer hoists out of the loop).
+  if (isXRepeatVRFVector(I->getType())) {
+    auto CanUseSplat = [](const Instruction *U) {
+      if (isa<BinaryOperator>(U))
+        return true;
+      const auto *II = dyn_cast<IntrinsicInst>(U);
+      return II && (II->getIntrinsicID() == Intrinsic::fma ||
+                    II->getIntrinsicID() == Intrinsic::fmuladd);
+    };
+    if (!CanUseSplat(I))
+      return false;
+    for (Use &U : I->operands()) {
+      auto *Op = dyn_cast<Instruction>(U.get());
+      if (!Op || any_of(Ops, [&](Use *Sunk) { return Sunk->get() == Op; }))
+        continue;
+      if (!match(Op, m_Shuffle(m_InsertElt(m_Value(), m_Value(), m_ZeroInt()),
+                               m_Value(), m_ZeroMask())))
+        continue;
+      if (!all_of(Op->users(), [&](const User *Usr) {
+            return CanUseSplat(cast<Instruction>(Usr));
+          }))
+        continue;
+      Ops.push_back(&Op->getOperandUse(0));
+      Ops.push_back(&U);
+    }
+    return !Ops.empty();
   }
 
   if (!I->getType()->isVectorTy() || !ST->hasVInstructions())

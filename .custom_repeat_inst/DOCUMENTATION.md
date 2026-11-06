@@ -16,7 +16,17 @@ For a visual overview (pipeline diagram, register blocks, worked example), open
 | 5 — `<4 x i32>` blocks; the compiler picks 4 or 8 | `d5087d6b74df` | committed |
 | 6 — Strided loads (`lw` + REPEAT with any stride) | `7775c26197b3` | committed (one commit with Phase 7) |
 | 7 — gepdot: splat cost, keep small loops rolled for the vectorizer | `7775c26197b3` | committed (one commit with Phase 6) |
-| 8 — `xrepeatint`: frozen copy of XRepeat; `xrepeat` keeps evolving | — | not committed yet |
+| 8 — `xrepeatint`: frozen copy of XRepeat; `xrepeat` keeps evolving | `477e688a98d6` | committed |
+| 9 — `xrepeat` targets the VRF core: assembler and disassembler | — | not committed yet (one commit with Phases 9–18) |
+| 10 — `xrepeat`: vectors in blocks of F registers (8 and 16 wide, i32 and f32) | — | not committed yet (one commit with Phases 9–18) |
+| 11 — `xrepeat`: instruction + REPEAT for VRF vector operations | — | not committed yet (one commit with Phases 9–18) |
+| 12 — `xrepeat`: cost model, reductions; the vectorizers use the VRF | — | not committed yet (one commit with Phases 9–18) |
+| 13 — Emulator of both cores, kept in the repo (`sim/`); VRF code run and checked | — | not committed yet (one commit with Phases 9–18) |
+| 14 — VRF core: i32 sums and dot products accumulate in the loop, in an f register | — | not committed yet (one commit with Phases 9–18) |
+| 15 — VRF core: fused ordered float dot product (`fmadd.s` + REPEAT) | — | not committed yet (one commit with Phases 9–18) |
+| 16 — VRF core: strided and interleaved loads **and stores** (`flw`/`fsw` + REPEAT) | — | not committed yet (one commit with Phases 9–18) |
+| 17 — resnet8: chained reductions, 16-product sums, block-load scheduling | — | not committed yet (one commit with Phases 9–18) |
+| 18 — axpy (a metric, not a gap) and dotxvf: loop fusion before the vectorizers | — | not committed yet (one commit with Phases 9–18) |
 
 All code is under `llvm/lib/Target/RISCV/` unless another path is given. Every code-generation
 change is guarded by `hasXRepeatVectors()` (XRepeat or XRepeatInt, and no V extension; before
@@ -376,9 +386,7 @@ small Python emulator of RV32IM + MAC/REPEAT, written from the semantics in `PLA
 the real hardware), with a minimal bare-metal runtime (`_start`, a `printf` that writes to an MMIO
 port, exit via `ecall`) and linked with `/usr/bin/ld.lld`.
 
-> ⚠ The emulator lives in the session scratchpad, which is temporary:
-> `/tmp/claude-1000/-home-igabirondo-tesis-dl4compilers-llvm-project-22/58d18e53-eecd-4e39-9a71-8032c4f240e2/scratchpad/sim/`
-> (`rvsim.py`, `rt.c`, `link.ld`, `build.sh`). Copy it here if you want to keep it.
+> The emulator now lives in [`sim/`](sim/) and also models the VRF core (Phase 13).
 
 | Version | Checksum | Instructions in the `bench_mark(0)..(1)` window |
 |---|---|---|
@@ -677,7 +685,8 @@ and checksum (`mlp`'s plain version is `base_mlp/main_mlp.c`). `compare_asm.sh` 
 three ways (plain/rv32im, plain/rv32im_xrepeat, hand) into `asm_compare/<bench>/`, and
 `asm_loops.py` lists every innermost loop in `loops.txt` and `asm_compare/summary.txt`.
 
-Steps are emulator steps in the measured window (`bench_mark(0)`…`bench_mark(1)`), REPEATed
+Steps are emulator steps in the measured window (`bench_mark(0)`…`bench_mark(1)`; for bert_tiny that
+is only the embeddings, see the measurement correction in Phase 16), REPEATed
 instructions included; resnet8 with `IMG_SIZE=8`, bert_tiny with 8 tokens, hidden 64, FFN 256.
 REPEAT mask bits: 0 = `rd`, 1 = `rs1`, 2 = `rs2`, 3 = `rs3` advance by one register per repeat.
 
@@ -698,7 +707,7 @@ REPEAT mask bits: 0 = `rd`, 1 = `rs1`, 2 = `rs2`, 3 = `rs3` advance by one regis
 - One clang weakness in bert_tiny: in one copy of the variance loop the block holding the splatted
   mean is reloaded from the stack every iteration (8 `lw`), from register pressure.
 
-## Known limitation — dotxvf: no reuse of `x` across rows
+## Known limitation — dotxvf: no reuse of `x` across rows (fixed for the VRF core in Phase 18)
 
 dotxvf computes `y[u] = A[u] · x` for 4 rows (`u < 4`, `k < 1024`). Emulator steps: rv32im 28,706,
 clang 15,400, hand-written **11,408**. This is the one benchmark where the hand version clearly wins,
@@ -769,6 +778,834 @@ the incompatibility. Validation: all 3270 RISC-V lit tests and the 641 TargetPar
 pass. `compare_asm.sh` regenerates byte-identical code (only the `.ident` commit hash changes),
 and every benchmark compiled with `xrepeatint` is identical to `xrepeat` except for the arch
 attribute lines.
+
+## Phase 9 — `xrepeat` moves to the VRF core: assembler and disassembler
+
+**Goal.** Make `xrepeat` describe the new `repeat_rv` core in
+[`ENCODINGS.md`](ENCODINGS.md). Its vector data lives in a second register file, the VRF, which
+is the F extension's register file: `f0`..`f31` hold floats and integers alike, and `f0` is an
+ordinary register. Addresses and the REPEAT stride stay in x registers. This phase only teaches
+the assembler and disassembler the new instructions; code generation for them comes next.
+
+**Changes to Phase 8's split.** The two extensions no longer share instructions:
+- `xrepeat` implies F (`-march=rv32im_xrepeat` also turns on `f` and `zicsr`).
+- Its instructions (custom-1 `0x2B`, custom-3 `0x7B`, custom-2 for REPEAT), all under
+  `HasVendorXRepeat`, decoder table `XRepeat`. The mnemonics are `xr.*`; `ENCODINGS.md` calls
+  them `vr.*`, which is wrong (confirmed by the hardware author).
+
+  | Assembly | Encoding | Meaning |
+  |---|---|---|
+  | `xr.add/sll/slt/sltu/xor/srl/or/and/sub/sra fd, fs1, fs2` | custom-1, funct3 000, funct7 = op 0,1,2,3,4,5,6,7,8,0xD | VRF integer ALU |
+  | `xr.mac fd, fs1, fs2, fs3` | custom-1, funct3 001, R4 | VRF integer `fd = fs1*fs2 + fs3` |
+  | `xr.mv.vx fd, rs1` / `xr.mv.xv rd, fs1` | custom-1, funct3 010 / 011 | x → VRF / VRF → x |
+  | `xr.lw fd, imm(rs1)` / `xr.sw fs2, imm(rs1)` | custom-1, funct3 100 (I) / 101 (S) | VRF load / store |
+  | `xr.addi/slti/sltiu/xori/ori/andi fd, fs1, imm`, `xr.slli/srli/srai fd, fs1, shamt` | custom-3, funct3 as OP-IMM (`srai`: imm bit 10) | VRF integer ALU with immediate |
+  | `xr.repeat mask, rs2, count` | custom-2, mask in bits 31:28, **rs2 = stride register, rs1 field = literal count 0..15** | repeat the previous instruction `count` more times |
+
+  The VRF operands print as f registers in ABI form (`f8` → `fs0`, `f16` → `fa6`, …).
+- `xrepeatint` keeps the original `xr.mac` (custom-0, x registers) and
+  `xr.repeat mask, stride_reg, count_reg`, now under `HasVendorXRepeatInt` with its own decoder
+  table `XRepeatInt`. The same mnemonic is accepted by whichever extension is enabled, and the
+  wrong form is reported as needing the other one.
+- The GPR-block code generation (Phases 2–7) is `xrepeatint`'s alone: the patterns use
+  `HasVendorXRepeatInt`, and the C++ guard is `RISCVSubtarget::hasXRepeatGPRVectors()`
+  (XRepeatInt and no V). Until the VRF code generation exists, `-march=rv32im_xrepeat` compiles to
+  scalar code (with F), and `compare_asm.sh` builds its `base_xrepeat` column with
+  `rv32im_xrepeatint`.
+
+**Tests.**
+- The Phase 2–7 tests are renamed `xrepeatint-*` and run only with `+xrepeatint`.
+- `MC/RISCV/xrepeat-valid.s`: 35 instructions, with encodings computed by a separate script
+  directly from `ENCODINGS.md` (not from LLVM's output). They are checked in both directions
+  (assemble and disassemble), plus `flw`/`fmadd.s` being available through the implied F.
+- `MC/RISCV/xrepeat-invalid.s`: out-of-range mask, count and immediates; x registers where VRF
+  registers go and the other way round; XRepeatInt's forms; rv64.
+- Unit test `ParseArchString.XRepeatImpliesF`.
+- Validation: all 3688 RISC-V lit tests (CodeGen, MC, disassembler, vectorizers, unroll,
+  cost model, PhaseOrdering, clang driver) and 642 TargetParser unit tests pass; every benchmark
+  compiled with `xrepeatint` gives the same code as before.
+
+## Phase 10 — `xrepeat`: vectors in blocks of F registers
+
+**Goal.** The VRF equivalent of Phase 2: give the compiler vector types that live in the F
+registers, so later phases can select instructions + REPEAT on them. Only F registers are used,
+and they hold integer and float vectors alike.
+
+### Registers — `RISCVRegisterInfo.td`
+- `sub_xrf0`..`sub_xrf15`: element `I` of a block (always 32 bits, unlike the GPR `sub_xr*`
+  indices whose size depends on XLEN). `RISCVRI::getXRFSubRegIndex(I)` in `RISCVRegisterInfo.h`
+  maps an element number to its index (the generated enum values are not guaranteed to be
+  consecutive).
+- Register tuples `XRV_F0_F7`, `XRV_F8_F15`, `XRV_F16_F23`, `XRV_F24_F31` (8 wide) and
+  `XRV_F0_F15`, `XRV_F16_F31` (16 wide). REPEAT replaces the low bits of a walking register
+  number with the iteration, so a block must start at a multiple of its width; these are exactly
+  the aligned ones (f0 is a normal register on this core, so it can start a block).
+- Register classes `XRFVec8` = {`v8i32`, `v8f32`} and `XRFVec16` = {`v16i32`, `v16f32`}: one class
+  per width with both element types, because the same F registers hold either. Allocation order:
+  f0–f7, f24–f31, f16–f23, f8–f15 for 8 wide; f0–f15, f16–f31 for 16 wide (f8/f9/f18–f27 are
+  callee-saved and f10–f17 carry arguments under the hard-float ABIs; under `ilp32` every F
+  register is caller-saved). No pressure sets of their own (the FPR sets already count them).
+
+### Legality and lowering — `RISCVISelLowering.cpp`
+- `RISCVSubtarget::hasXRepeatVRFVectors()` = XRepeat and no V. It adds the four types to the two
+  classes.
+- Whole-vector loads, stores, copies, `undef` and `freeze` are native; every other operation is
+  `Expand` (scalarized) until instruction selection is added. Bitcasts between the `i32` and `f32`
+  vector of a width cost nothing (same registers).
+- `isShuffleMaskLegal` is false and the RISC-V DAG combines skip these types (they assume RVV or
+  scalars), as for the GPR blocks.
+- **Calls:** these vectors are passed and returned as their elements
+  (`getRegisterTypeForCallingConv`, `getNumRegistersForCallingConv`,
+  `getVectorTypeBreakdownForCallingConv`), exactly as without XRepeat, so the ABI is unchanged —
+  checked against plain `rv32imf` for `ilp32` and `ilp32f`. (The GPR blocks of `xrepeatint` still
+  crash here; that frozen extension is left as it was.)
+- **Store merging:** `canMergeStoresTo` refuses these types. Otherwise the DAG combiner merges
+  eight scalar constant stores into one vector store that first loads the vector from the constant
+  pool (seen in gepdot: 8 `flw` + 8 `fsw` instead of 3 `li` + 8 `sw`).
+
+### Pseudos, copies, spills
+- `PseudoXRFLoad8/16` and `PseudoXRFStore8/16` (`RISCVInstrInfoXRepeat.td`): a whole block as one
+  `flw`/`fsw` per element (they move the 32 bits unchanged, so integers too), expanded in
+  `RISCVExpandPseudoInsts.cpp` by the same routine as the GPR ones. Used for vector loads/stores
+  (address used as is, no folded offset, so the last element's offset can't overflow) and for
+  spills/reloads (`storeRegToStackSlot`/`loadRegFromStackSlot`;
+  `eliminateFrameIndex` folds the slot offset only if `+28`/`+60` still fits in 12 bits).
+- Copies (`copyPhysReg`): one `fmv.s` (`fsgnj.s`, a plain bit copy) per element.
+
+Loads and stores become `flw`/`fsw` + REPEAT, and copies `xr.addi` + REPEAT, in the instruction
+selection phase; spills keep one instruction per element (REPEAT needs a stride register, and
+none is free when spilling).
+
+### Cost model
+`isXRepeatVRFVector` sends explicit vector code on these types to the generic cost model
+(shuffles, casts, element insert/extract, scalarization), so it never reaches the RVV-only code.
+The vectorizers still don't create these vectors (vector register width is 0 for `xrepeat`).
+
+### ABI note
+`xrepeat` implies F, and clang picks the default ABI from the extensions: `-march=rv32im_xrepeat`
+alone now means `-mabi=ilp32f` (hard-float: floats in `fa0`–`fa7`). Pass `-mabi=ilp32` to keep
+the soft-float ABI (the benchmark scripts do).
+
+### Tests and validation
+- `CodeGen/RISCV/xrepeat-vrf.ll`: loads/stores of all four types, scalarized `add`/`fadd`, element
+  extracts, a 16-wide spill around a call, a block swap in a loop (copies), bitcasts, arguments,
+  returns and a call, and the store-merging case; also run at `-O0` (fast register allocator).
+- `Analysis/CostModel/RISCV/xrepeat-vrf.ll`: costs of explicit vector code on the four types.
+- All 3691 RISC-V lit tests and 642 TargetParser unit tests pass; `xrepeatint` benchmark code is
+  unchanged; every benchmark compiled with `rv32im_xrepeat` is identical to `rv32imf`.
+
+## Phase 11 — `xrepeat`: instruction + REPEAT for VRF vector operations
+
+**Goal.** The VRF equivalent of Phase 3: each operation on a block of F registers becomes one
+instruction on the first element followed by `xr.repeat mask, stride, count` (count = 7 or 15).
+Each source either walks (a vector, its mask bit set) or stays fixed (a splat: one F register).
+
+| Operation (`v8i32`/`v16i32`, `v8f32`/`v16f32`) | Instruction + REPEAT |
+|---|---|
+| load / store | `flw` / `fsw`; stride 4 in an x register (`li`, shared and hoisted like any constant); offset folded, since the address advances by the stride. A stored splat is `fsw` with mask 0 (value fixed) |
+| `add sub and or xor shl srl sra` | `xr.add` … `xr.sra`; with a constant splat that fits, `xr.addi xr.andi xr.ori xr.xori xr.slli xr.srli xr.srai` |
+| `mul`, `add(mul a, b), c` | `xr.mac` (zero addend from `xr.mv.vx f, zero` for a plain multiply) |
+| `fadd fsub fmul`, `fma` / `fmuladd` | `fadd.s fsub.s fmul.s fmadd.s` (dynamic rounding mode) |
+| splat on its own | `xr.addi vd, s, 0` with only rd walking |
+| copy (`copyPhysReg`) | `xr.addi vd, vs, 0` |
+| element at a constant index | the F register itself (`f32`), or `xr.mv.xv`/`xr.mv.vx` (`i32`) |
+| non-constant `BUILD_VECTOR` | one insert per element; a constant vector is loaded from the constant pool |
+
+Splats as operands: an `i32` scalar is moved in with `xr.mv.vx`, an `f32` is used where it is.
+Spills keep one `flw`/`fsw` per element (no free x register for the stride while spilling).
+Everything else (compares, selects, divisions, conversions, shuffles, reductions…) is still
+scalarized.
+
+### Pseudos — `RISCVInstrInfoXRepeat.td`
+One generic scheme instead of one hand-written pseudo per operation:
+`PseudoXRF_<Base>_<W>_<kinds>` has the operands of `Base` (the single-register instruction:
+`XRV_ADD`, `FADD_S`, `FLW`…) in the same order, with each F-register source either a vector class
+(`V`) or `FPR32` (`S`), plus a stride register for loads/stores. All combinations are generated
+with `foreach`. A searchable table (`XRFRepeatPseudosTable` → `RISCV::getXRFRepeatPseudoInfo`)
+maps each pseudo to its base instruction, width and whether it is a store / has a stride. One
+expansion routine (`expandXRFRepeat` in `RISCVExpandPseudoInsts.cpp`) handles them all: the base
+instruction on element 0 of every vector operand, then REPEAT whose mask has the bit of every
+vector operand (rd = 0, rs1..rs3 = 1..3; a store's value is rs2). The REPEAT carries the vector
+result as an implicit def and the sources as implicit uses (they are read on every step). It runs
+after scheduling, so nothing gets between the instruction and its REPEAT.
+
+### Register constraints, and what a 16-wide block can do
+- Vector operands of one width are aligned blocks, so a vector result and a vector source are the
+  same block or disjoint: with only vector sources no constraint is needed (in-place works).
+- A fixed source must not be inside the result block (a later step would read it after an earlier
+  step overwrote it). The result is tied to a vector source, or early-clobber if there is none.
+  The one case that slips through: the fixed source is an element of the very vector the result
+  is tied to, and the register coalescer gives it that element's register (`v - splat(v[3])`).
+  The expansion detects it and falls back to one instruction per element, that element last
+  (correct, just not a single REPEAT).
+- **16 wide:** two 16-wide vectors take all 32 F registers. So a 16-wide instruction can read two
+  vectors only if nothing else is live. Three-source forms with two or more vector sources are not
+  generated; `fmuladd` is an `fmul` and an `fadd` at 16 wide (`isFMAFasterThanFMulAndFAdd`); a
+  16-wide `mul` of two vectors (the MAC needs a zero addend) and a 16-wide `fma` with two vectors are
+  scalarized (`lowerXRepeatVRFOperation`). At 8 wide (four blocks) every form fits.
+
+### Lowering — `RISCVISelLowering.cpp`
+- Legal: `add sub mul and or xor shl srl sra` on the `i32` types, `fadd fsub fmul fma` on the
+  `f32` types.
+- Custom (`lowerXRepeatVRFOperation`): `BUILD_VECTOR` (a splat becomes `RISCVISD::XRF_SPLAT`, a
+  constant vector goes to the constant pool, anything else is a chain of inserts), element
+  insert/extract at a constant index, and the 16-wide `mul`/`fma` above.
+- TableGen note: `extractelt`/`insertelt` with an `i32` in a GPR trips TableGen's per-HwMode type
+  check, so those patterns use `vector_extract`/`vector_insert`; `XRF_SPLAT`'s type profile is
+  loose for the same reason.
+
+### Tests and validation
+- `CodeGen/RISCV/xrepeat-vrf-ops.ll` (new): loads/stores with offsets, integer ALU (register,
+  immediate and splat forms), MAC, float ops, the 16-wide cases, splat stores, copies, a loop with
+  a 16-wide accumulator, and the coalescer fallback; also run at `-O0`.
+- `CodeGen/RISCV/xrepeat-vrf.ll` and `Analysis/CostModel/RISCV/xrepeat-vrf.ll` regenerated.
+- The generated code assembles with `llvm-mc` to the same bytes as `llc -filetype=obj`, and
+  disassembles with no unknown instructions.
+- All RISC-V lit tests (3297) and the 642 TargetParser unit tests pass; `xrepeatint` benchmark
+  code is unchanged; every benchmark with `rv32im_xrepeat` is still identical to `rv32imf` (the
+  vectorizers don't create VRF vectors yet; that is the TTI phase).
+- Not yet run on the emulator (it doesn't model the VRF core yet).
+
+## Phase 12 — `xrepeat`: cost model and reductions; the vectorizers use the VRF
+
+**Goal.** The VRF equivalent of Phase 4: the loop and SLP vectorizers produce 8- and 16-wide
+`i32`/`float` vectors on the VRF core. Reductions (dot products) became necessary at the same
+time, so they are here too.
+
+### Reductions — `RISCVInstrInfoXRepeat.td`
+REPEAT can keep the result field fixed while a source walks, and every step then accumulates
+into the same register, in element order:
+
+| Reduction | Code |
+|---|---|
+| `reduce.add <N x i32>` | `xr.add facc, facc, v0` + REPEAT mask 0100 (`facc` = 0 from `xr.mv.vx`, result back with `xr.mv.xv`) |
+| `reduce.add(mul a, b)` | `xr.mac facc, a0, b0, facc` + REPEAT mask 0110 (one instruction pair for a whole dot product) |
+| `reduce.fadd` (ordered or not) | `fadd.s facc, facc, v0` + REPEAT mask 0100: in element order, so an ordered (strict FP) sum is exact |
+
+The pseudos (`PseudoXRF_*_RED*`) have a single-register result tied to the accumulator source. If
+the register coalescer puts the accumulator in an element of the summed block, or a fixed source
+in the result block (the Phase 11 case), the expansion now copies the clashing register into a
+free F register (found with `LivePhysRegs`) and still emits a single burst (`fmv.s` before, and
+for the accumulator one after). Only with no free F register does it fall back to one
+instruction per element (an error for an ordered float sum, whose order that would change).
+
+### Cost model — `RISCVTargetTransformInfo.{h,cpp}`
+- `getRegisterBitWidth` = 512 (VF up to 16 for 32-bit elements); `getMinVectorRegisterBitWidth`
+  = 256.
+- `getXRFPairCost`: 2 per whole 8/16-wide block of **exactly** `i32` or `float` (an `<N x i16>`
+  would be promoted to an `i32` block but loaded/stored element by element, so it has no cost
+  here; nor do vectors that aren't whole blocks).
+- Costed as instruction + REPEAT: loads and stores; `add sub and or xor shl lshr ashr`, `mul`;
+  `fadd fsub fmul`, `fmuladd`/`fma`; add/fadd reductions (+2 for moving the accumulator in and
+  out); splats (1: one move into an F register); bitcasts between the `i32` and `float` vectors
+  (0). Everything else has an invalid throughput cost (`isUnsupportedXRepeatOp` now covers both
+  cores), so the vectorizers don't pick it.
+- **16 wide:** a `mul` of two vectors, `fma`, and a `mul`-add reduction are invalid; `fmuladd` costs
+  an `fmul` + `fadd`.
+- **Register pressure:** `getNumberOfRegisters(vector)` = 3 blocks of 8 (a 16-wide value counts as
+  two, `getRegUsageForType`). The fourth block is left for what the vectorizer doesn't see but
+  needs F registers: splatted scalars, a MAC's zero addend, accumulators. With it, the loop
+  vectorizer's register-pressure check (on for RISC-V) rejects a 16-wide loop with two vector
+  values live. Measured on axpy, 16 wide spilled 32 registers per iteration; 8 wide spills none.
+  A loop with a single vector stream (e.g. `y[i] = y[i] * s + 1`, an ordered sum) still gets 16.
+- SLP has no such check, so `getMaximumVF` caps it at 8 elements (16 scalars become two 8-wide
+  trees).
+- No interleaving (`getMaxInterleaveFactor` = 1), and the unrolling rules of the GPR version apply
+  too: auto-vectorized loops are not unrolled, and small loops the vectorizer can turn into whole
+  blocks are kept rolled for it (trip count a multiple of 8; `i32` or `float` loads/stores and
+  `add sub mul and or xor` shifts `fadd fsub fmul fmuladd`).
+
+### Two changes outside the cost model
+- **Splats hoisted out of the loop** (the vectorizer puts the broadcast in the preheader) reached
+  instruction selection as a whole vector block: a block wasted on a scalar, and a 16-wide `mul`
+  that looked like two vectors and got scalarized. `isProfitableToSinkOperands` now sinks splat
+  operands of the VRF vector operations next to their users (CodeGenPrepare), where they become
+  fixed fields.
+- **`RISCVCodeGenPrepare`** turns the scalar accumulator phi of an `fadd` reduction into a vector
+  phi (good for RVV). On the VRF core that put the accumulator in a whole block and splatted it
+  every iteration; it is now done only with V.
+- Non-constant `i32` splats are bitcast to `f32` (`lowerXRepeatVRFOperation`), so a splat of a
+  loaded value is an `flw` straight into the F register and a splat of a vector element is used
+  in place. The integer patterns accept the splat in either register file.
+
+### Results (`compare_asm.sh`, new `base_vrf` column = `-march=rv32im_xrepeat`)
+Every benchmark kernel is vectorized at VF 8 (two vector streams, or one stream plus a vector
+accumulator):
+
+| bench | `xrepeatint` (GPR) | `xrepeat` (VRF) | spills: rv32im / xrepeatint / xrepeat |
+|---|---|---|---|
+| axpy | 17 insns per 8 (`sw` ×8) | 11 per 8 (`fsw` + REPEAT) | 2 / 12 / 2 |
+| dotxvf, mlp, resnet8 dot loops | 9 per 8 | 9 per 8 (vector accumulator, `xr.mac` mask 1111) | 4 / 13 / 4; 3 / 13 / 4; 198 / 992 / 189 |
+| gepdot | 8 | 8 (scalar `flw` straight into an F register) | 7 / 13 / 7 |
+| bert_tiny | 23 loops, 238 insns | 24 loops, 320 insns (one more vectorized: a 16-wide table lookup, 84 insns per 16 against ~112 scalar) | 23 / 64 / 25 |
+
+The REPEAT loops are as short as on the GPR core, stores are now repeated too, and since the
+vectors no longer take up the GPRs, the scalar code around them spills like plain `rv32im`.
+
+### Tests
+- `Analysis/CostModel/RISCV/xrepeat-vrf.ll`: costs of every supported and unsupported case.
+- `Transforms/LoopVectorize/RISCV/xrepeat-vrf.ll`: axpy (VF 8), dot (vector accumulator), a single
+  stream (VF 16), float axpy (`fmuladd`), ordered float sum (VF 16, in loop), division and `i16`
+  (scalar).
+- `Transforms/SLPVectorizer/RISCV/xrepeat-vrf.ll`: 8 `i32`, 16 floats as two 8-wide trees, 4
+  elements left scalar.
+- `Transforms/LoopUnroll/RISCV/xrepeat-vrf-keep-small-loops.ll`.
+- `CodeGen/RISCV/xrepeat-vrf-ops.ll`: reductions, dot products, the accumulator clash, a hoisted
+  splat in a loop, an ordered sum in a loop.
+- All 3305 RISC-V lit tests and the 642 TargetParser unit tests pass; the `rv32im`, `xrepeatint`
+  and hand-written versions of every benchmark compile exactly as before.
+
+### Known gaps (Phase 12)
+- ~~Not run on the emulator yet~~: done in Phase 13; every benchmark and the differential kernel
+  test pass on the VRF core.
+- Straight-line code with several blocks (SLP) can still spill: the scheduler issues all the loads
+  before the arithmetic, and four 8-wide blocks are all 32 F registers.
+- Not supported (scalar or invalid cost): compares/selects, divisions, conversions, `i8`/`i16`,
+  strided and interleaved accesses, min/max reductions, shuffles other than splats.
+- Spills of a block are one `flw`/`fsw` per element.
+
+## Phase 13 — Emulator of both cores; the VRF code runs
+
+Until now the VRF code was only checked by lit tests and by reading the assembly. The Python
+emulator used since Phase 4 lived in a temporary session directory and only knew the GPR core. It
+is now in [`sim/`](sim/) and models both cores, so every compiled version can be run and checked.
+Nothing in LLVM changed in this phase.
+
+| File | What it is |
+|---|---|
+| `sim/rvsim.py` | The emulator. `--core int`: RV32IM + `xr.mac` (custom-0) + REPEAT with `stride = x[rs1]`, `count = x[rs2]` (the `xrepeatint` core, unchanged). `--core vrf`: RV32IMF + the `ENCODINGS.md` ISA. |
+| `sim/rt.c`, `sim/link.ld`, `sim/sys/stdio.h` | Bare-metal runtime: `_start`, a `printf` over an MMIO byte port (`%d %u %x %s`, zero padding and width, no `-`), exit through `ecall`. |
+| `sim/build.sh <core> <name> <src.c> <march> [flags]` | Compile, link with `ld.lld`, disassemble and run one program; output in `sim/out/` (ignored by git). |
+| `sim/run_benchmarks.sh [bench…] [-- flags]` | The six benchmarks in the four versions of `compare_asm.sh`, with checksum check and the `bench_mark(0)..(1)` counts. With size flags (add `-DBENCH_CUSTOM_SIZES`) every version is compared to `base_rv32im` instead. |
+| `sim/run_tests.sh [N…]` | Differential test: `sim/tests/kernels.c` built for scalar `rv32imf` and for `rv32im_xrepeat` must print the same hashes, for runtime sizes 1, 7, 8, 9, 16, 37, 64, 100, 128. |
+
+### VRF core model
+
+- The f registers are the VRF: 32 words with no hardwired zero, holding integers and floats.
+- `xr.<alu>`/`xr.mac`/`xr.mv.vx`/`xr.mv.xv`/`xr.lw`/`xr.sw` (custom-1) and `xr.<alu>i` (custom-3)
+  follow `ENCODINGS.md`, with the `xr.*` names.
+- `xr.repeat`: mask in bits 31:28, `stride = x[rs2]` (signed), count = the rs1 field as a literal.
+  On extra step k, a walking register is the base register with its low bits replaced by k (a 4-,
+  8- or 16-wide window from the count), as `windowed_reg_id` does. The address of a repeated load
+  or store is `x[rs1] + imm + k·stride`. A load's destination always walks; a store's value walks
+  only with `mask[2]`.
+- Repeatable: `flw`, `fsw`, `xr.lw`, `xr.sw`, `xr.<alu>`, `xr.<alu>i`, `xr.mac`, `fadd.s`,
+  `fsub.s`, `fmul.s`, `fmadd.s`.
+- The steps run one after another, each reading its sources and then writing its result.
+- The F extension is IEEE single precision: computed exactly and rounded once (`fmadd.s` is
+  fused), all rounding modes, canonical NaN. `fflags` is not tracked.
+- **Strict mode** (the default; `--lax` turns it off) makes an error of everything the compiler
+  must never emit, instead of silently windowing it:
+  - a walking register that isn't aligned to its window;
+  - mask bits for operands the instruction doesn't have;
+  - REPEAT of an ineligible instruction;
+  - a REPEAT reached by a branch instead of from the instruction before it.
+
+  None of these fired in any run below.
+
+The integer core gives exactly the step counts recorded in earlier phases (mlp 18,462 / 10,143 /
+10,225; gepdot 22,555; …), so the rewrite didn't change its model.
+
+### Results: benchmarks (default sizes, golden checksums)
+
+| Benchmark | rv32im | xrepeatint | **xrepeat (VRF)** | hand |
+|---|---|---|---|---|
+| mlp | 18,462 PASS | 10,143 PASS | **11,440 PASS** | 10,225 PASS |
+| axpy | 9,012 PASS | 4,760 PASS | **4,885 PASS** | 5,885 PASS |
+| dotxvf | 28,706 PASS | 15,400 PASS | **15,478 PASS** | 11,408 PASS |
+| gepdot | 28,695 PASS | 22,555 PASS | **22,555 PASS** | 23,832 PASS |
+| resnet8 | 1,894,912 PASS | 1,894,912 PASS | **1,894,912 PASS** | 3,010,011 PASS |
+| bert_tiny | 179,038 PASS | 141,940 PASS | **143,435 PASS** | 157,301 PASS |
+
+Steps in the `bench_mark(0)..(1)` window, REPEATed steps included. For resnet8 that window is only
+the first stage (conv1, scalar in every compiled version), so its numbers don't compare the
+vectorized code; its checksum covers the whole network.
+
+Non-default sizes, compared with `base_rv32im`:
+
+- mlp 67/21/16, 9/17/5, 16/24/33; axpy N=100; dotxvf NC=200; resnet8 IMG_SIZE=8; bert_tiny
+  8/64/256: every compiled version (`xrepeatint` and VRF) gives the scalar checksum.
+- The hand-written mlp differs at 67/21/16 and 9/17/5, because it assumes multiples of 8.
+
+### Results: differential kernel test (`run_tests.sh`)
+
+40 kernels at each of the 9 sizes. Covered:
+- integer add/sub/logic/shifts (constant and variable), immediates, mul, scale, axpy, a·b+c,
+  splat from memory, fill, in place;
+- integer sum and dot-product reductions;
+- constant 8/16/24/64-element loops and the gepdot shape;
+- SLP at 8 and 16;
+- a block live across a call (spilled and reloaded);
+- float add/sub/mul, axpy, a·b+c, `fma`, scale;
+- an ordered float sum (in loop and 64-wide);
+- the 16-wide `y = y·s + 1` (int and float).
+
+Every kernel except `k_press` (which the vectorizers keep scalar) is vectorized; this was checked in
+the disassembly. **Every kernel gives bit-identical results to scalar `rv32imf` at every
+size.**
+
+One case was allowed to differ, and was reported separately until Phase 15 fused it: the float dot product written
+`s += a[i] * b[i]` with the default `-ffp-contract=on` (`fdot~`).
+- The front end emits `llvm.fmuladd`, which allows fusing but doesn't require it. Scalar code
+  fuses (`fmadd.s`).
+- The loop vectorizer turns the ordered `fmuladd` reduction into a vector `fmul` plus an in-order
+  `fadd`, with no `contract` flag, so the IR asks for two roundings. The backend correctly may not
+  fuse them back, and the result differs in the last bits.
+- The same loop with contraction off (`fdot_nc`) matches exactly. This also confirms the in-order
+  `fadd.s` + REPEAT reduction.
+
+### Findings for later
+
+- **Fused ordered float dot product** (done in Phase 15). If the loop vectorizer put `contract` on the `fmul` and the
+  reduction it creates from an `fmuladd` (the original allowed exactly that fusion), the backend
+  could select one `fmadd.s` + REPEAT (mask `0110`, accumulator fixed). That is bit-identical to
+  scalar code and one burst shorter.
+- **mlp's start vector** (fixed in Phase 14). The VRF mlp has the same 9-instruction hot loop as `xrepeatint`, but each
+  neuron builds its start vector `<bias, 0, …, 0>` with one `xr.mv.vx`, six `fmv.s` and an 8-step
+  block copy into the accumulator block. This is the likely source of most of the 1,297 extra steps. A zero splat burst plus one
+  insert, built in place, would remove most of it.
+- axpy/dotxvf/bert_tiny are within 1–3% of `xrepeatint` in steps, but take fewer instructions.
+
+## Phase 14 — VRF core: integer sums and dot products accumulate in the loop
+
+**Problem** (found in Phase 13). The loop vectorizer gave the VRF core's `i32` dot products a vector
+accumulator. Every outer iteration then paid for two extra steps:
+- building `<init, 0, …, 0>`: one `xr.mv.vx`, six `fmv.s` and an 8-step block copy;
+- reducing the block after the loop: a zero reloaded from the stack, `xr.add` + REPEAT, `xr.mv.xv`.
+
+In mlp that was about 25 steps per neuron, 1,266 steps in all. The inner loop itself was the same 9
+instructions as on `xrepeatint`, but with `xr.mac` mask `1111` (8 separate accumulators).
+
+**Cause.** `preferInLoopReduction` still tested `hasXRepeatVectors()`, which since Phase 8 means the
+GPR core only. The VRF cost model added in Phase 12 never enabled it.
+
+**Changes**
+
+| File | Change | Why |
+|---|---|---|
+| `RISCVTargetTransformInfo.cpp`, `preferInLoopReduction` | true for `i32` add reductions on both cores | The vectorizer reduces each block in the loop and adds the result to a scalar: `acc += reduce.add(a*b)`. |
+| `RISCVCodeGenPrepare.cpp`, new `keepXRFAccumulatorInFPR` | An `i32` phi updated only by `acc + reduce.add(…)` in its own block becomes a `float` phi, with bitcasts at both ends. Uses after the loop read a bitcast there, and LCSSA phis become `float` phis. | An `i32` phi lives in an x register, so the in-loop reduction alone gave 12 instructions per iteration (`fmv.s` of a zero, `xr.mac`, `xr.mv.xv`, `add`). As a `float`, the accumulator stays in its f register. |
+| `RISCVISelLowering.{h,cpp}`, `shouldConvertPhiType` | false for float → integer on the VRF core | Generic CodeGenPrepare (`optimizePhiTypes`) otherwise turns that `float` phi straight back into an `i32` one. |
+| `RISCVInstrInfoXRepeat.td` | `bitconvert(add(bitconvert FPR:$acc, vecreduce_add V))` → `xr.add` + REPEAT into `$acc` (mask `0100`); the same around `vecreduce_add(mul A, B)` → `xr.mac` + REPEAT (mask `0110`) | The sum goes straight into the accumulator register. |
+
+The rewrite leaves alone any sum that is used inside the loop as well; it then goes through an x
+register as before. That case is checked by the `loop_isum_used` test.
+
+Result: mlp's neuron loop. The bias is loaded with `flw` directly into the accumulator and the result
+stored with `fsw`, so the sum never visits an x register:
+
+```
+    flw     fa5, 0(a7)              # acc = bias[h]
+.LBB0_2:
+    flw     ft0, 0(t0)  ; xr.repeat 1, a3, 7
+    flw     fs8, 0(t1)  ; xr.repeat 1, a3, 7
+    addi    t1, t1, 32
+    xr.mac  fa5, fs8, ft0, fa5 ; xr.repeat 6, zero, 7    # acc += Σ a[k]·b[k]
+    addi    t0, t0, 32
+    bne     t1, a5, .LBB0_2
+    fsw     fa5, 128(a7)
+```
+
+**Tests**
+- `CodeGen/RISCV/xrepeat-vrf-ops.ll`: `loop_isum` (8 wide, start value 5), `loop_dot` (result stored
+  through an LCSSA phi), `loop_isum16`, and `loop_isum_used`, which is not rewritten.
+- `Transforms/LoopVectorize/RISCV/xrepeat-vrf.ll`: `dot` now checks the in-loop scalar reduction.
+- All 3781 tests pass in the RISC-V CodeGen, MC, CostModel, LoopVectorize, SLPVectorizer and
+  InterleavedAccess suites, plus LoopUnroll, PhaseOrdering and CodeGenPrepare. The 642
+  TargetParser unit tests pass too.
+
+**Results** (emulator, every benchmark PASS; steps in the `bench_mark(0)..(1)` window):
+
+| Benchmark | `xrepeatint` | VRF, Phase 13 | **VRF, Phase 14** | hand |
+|---|---|---|---|---|
+| mlp | 10,143 | 11,440 | **10,174** | 10,225 |
+| axpy | 4,760 | 4,885 | 4,885 | 5,885 |
+| dotxvf | 15,400 | 15,478 | **15,398** | 11,408 |
+| gepdot | 22,555 | 22,555 | 22,555 | 23,832 |
+| resnet8 (conv1 window) | 1,894,912 | 1,894,912 | 1,894,912 | 3,010,011 |
+| bert_tiny | 141,940 | 143,435 | **141,248** | 157,301 |
+
+- The differential kernel test still gives bit-identical results for all 40 kernels at all 9 sizes.
+- `asm_compare/` was regenerated: every dot-product loop of `base_vrf` (mlp, dotxvf) is 9
+  instructions with `xr.mac` mask `0110`, and nothing else changed per neuron or row.
+
+**Caveat.** Steps are not cycles. Mask `0110` chains the 8 MACs through one register, while mask
+`1111` (the old vector accumulator) gives 8 independent ones. If the real core overlaps independent
+MACs, the old shape could be faster in cycles. Only the RTL simulator can decide; to go back, make
+`preferInLoopReduction` return false for the VRF core.
+
+## Phase 15 — VRF core: fused ordered float dot product
+
+**Problem** (found in Phase 13). With the default `-ffp-contract=on`, `s += a[i] * b[i]` on floats
+is `llvm.fmuladd`, which allows fusing but doesn't require it. Scalar code fuses it (`fmadd.s`). The
+loop vectorizer turns the ordered `fmuladd` reduction into a vector `fmul` and an in-order
+`vector.reduce.fadd`, keeping the `fmuladd`'s fast-math flags (none). That IR asks for two
+roundings, so the backend correctly couldn't fuse them. The result was two bursts per block
+(`fmul.s` + REPEAT, `fadd.s` + REPEAT) and a value a few bits off from the scalar loop.
+
+The core can do the fused, in-order version directly: `fmadd.s acc, a, b, acc` + REPEAT mask `0110`.
+That is exactly the scalar loop's sequence of fused operations, so it is bit-identical.
+
+**Changes**
+
+| File | Change | Why |
+|---|---|---|
+| `llvm/include/llvm/Analysis/TargetTransformInfo{,Impl}.h`, `llvm/lib/Analysis/TargetTransformInfo.cpp` | New hook `preferFusedFMulAddReduction()`, false by default | Generic code is unchanged for every other target. |
+| `llvm/lib/Transforms/Vectorize/VPlanConstruction.cpp`, `VPlanTransforms.h`, `LoopVectorize.cpp` | `createInLoopReductionRecipes(…, ContractFMulAdd)`: when the hook is on, the `fmul` created from an `fmuladd` link and its reduction get `contract` | `llvm.fmuladd` permits exactly this fusion, so the flags only preserve permission the original IR had. |
+| `RISCVTargetTransformInfo.h` | The hook returns true on the VRF core | |
+| `RISCVInstrInfoXRepeat.td` | New pseudos `PseudoXRF_FMADD_S_<W>_RED_{VV,VS,SV}` (FPR32 result tied to the accumulator), and PatFrags `riscv_xrf_fmul_contract`/`riscv_xrf_seq_fadd_contract` that require `contract` on the node. Pattern: `seq_fadd(acc, fmul(A, B))`, both contract → `fmadd.s` + REPEAT into `acc` (`AddedComplexity` 2) | Without `contract` the unfused `fmul.s` + `fadd.s` form is kept. The 16-wide two-vector form doesn't fit in the f registers (Phase 11) and stays unfused; 16 wide with a splat factor is fused. |
+
+The existing generic expansion handles the new pseudos with no change. The vector operands walk,
+the tied accumulator is fixed, and the rounding-mode operand is carried along.
+
+**Generated code** (`float s = 0; for (…) s += a[i] * b[i];`):
+
+```
+.LBB0_5:
+    flw     ft0, 0(a6)  ; xr.repeat 1, a3, 7
+    flw     fs8, 0(a7)  ; xr.repeat 1, a3, 7
+    addi    a7, a7, 32
+    fmadd.s fa5, ft0, fs8, fa5 ; xr.repeat 6, zero, 7     # s = fma(a[k], b[k], s), k = 0..7
+    addi    a6, a6, 32
+    bne     a7, a4, .LBB0_5
+```
+
+That is one burst less per block than before (`fmul.s` + REPEAT 7, `fadd.s` + REPEAT 4). With a
+constant factor (`s += a[i] * k`) the loop runs 16 wide: `fmadd.s` mask `0010`, with `k` fixed.
+
+**Tests**
+- `Transforms/LoopVectorize/RISCV/xrepeat-vrf.ll`: `fdot` checks `fmul contract` and
+  `call contract … @llvm.vector.reduce.fadd`.
+- `CodeGen/RISCV/xrepeat-vrf-ops.ll`:
+  - `fdot_contract`: `fmadd.s` mask `0110`;
+  - `fdot_contract16s`: 16 wide with a splat, mask `0010`;
+  - `fdot_nocontract`: still `fmul.s` + `fadd.s`.
+- Lit: all 4,834 tests pass in RISC-V CodeGen, MC, CostModel, SLPVectorizer and InterleavedAccess,
+  **all of `Transforms/LoopVectorize`** (every target, to confirm that nothing else changed),
+  LoopUnroll, PhaseOrdering and CodeGenPrepare. The 68 VectorizeTests unit tests pass.
+- Emulator: `sim/run_tests.sh` no longer has an "allowed to differ" kernel. `fdot` is now required to
+  match, and **all 40 kernels are bit-identical to scalar `rv32imf` at all 9 sizes**.
+- The benchmarks are integer code: `compare_asm.sh` gives byte-identical assembly in all four versions,
+  so their emulator results are those of Phase 14.
+
+## Phase 16 — VRF core: strided and interleaved accesses
+
+Phase 6 gave the GPR core strided loads. This phase ports them to the VRF core, and goes further on
+stores: the VRF core can repeat `fsw`, and the address advances by the stride register just as for
+loads. So **strided stores and interleaved stores are single bursts too**, where the GPR core needs
+one `sw` per element.
+
+**Changes**
+
+| File | Change |
+|---|---|
+| `RISCVInstrInfoXRepeat.td` | Nodes `XRF_STRIDED_LOAD`/`XRF_STRIDED_STORE` (type profile with no element-type constraint, for i32 and f32). Patterns reuse the `flw`/`fsw` pseudos with a stride register instead of `XRStride4`: a vector store walks the value (mask `0100`); a splat store is one fixed register (mask `0000`), as an f32 register or an i32 from an x register. |
+| `RISCVISelLowering.cpp` | `vp.strided.load`/`vp.strided.store` are Custom for `v8i32`/`v8f32`/`v16i32`/`v16f32` and their masks `v8i1`/`v16i1`. `lowerXRepeatVRFOperation` keeps only the unmasked, full-length form, as on the GPR core. `isLegalStridedLoadStore` is true for those types with 4-byte alignment. |
+| `RISCVInterleavedAccess.cpp` | `lowerXRepeatInterleavedLoad` now serves both cores; the field types come from `isXRepeatInterleaveFieldVT`. New `lowerXRepeatInterleavedStore` (VRF only): each field of a plain interleaved store, with every field present, becomes a `vp.strided.store` at `ptr + field·4` with stride `Factor·4`. |
+| `RISCVTargetTransformInfo.cpp` | `getStridedMemoryOpCost` and `getMemIntrinsicInstrCost` cover VRF vectors (same cost as contiguous: 2 per block). `getIntrinsicInstrCost` passes the strided intrinsics through to them (the VRF branch used to return invalid, which only the cost-model printer saw, since SLP asks `getMemIntrinsicInstrCost` directly). `getInterleavedMemoryOpCost`: one pair per field, for loads and for full stores, with fields of exactly 8 or 16 elements. |
+
+**Generated code**
+
+```
+# o[i] = m[16*i]*3 + m[16*i + 5]  (columns, stride 64; SLP)
+    li      x12, 0x40
+    flw     f0, 0(x11)  ; xr.repeat 1, x12, 7
+    flw     f24, 20(x11); xr.repeat 1, x12, 7
+    xr.mac  f24, f0, f15, f24 ; xr.repeat 0xb, x0, 7
+    fsw     f24, 0(x10) ; xr.repeat 4, x11(=4), 7
+
+# o[2i] = re[i] + 1; o[2i+1] = im[i] * 2   (interleaved store, factor 2)
+    fsw     ft0, 0(t1)  ; xr.repeat 4, a5(=8), 7
+    fsw     fs8, 4(t1)  ; xr.repeat 4, a5, 7
+
+# d[7-i] = a[i] + 1   (reversed: strided store, stride -4)
+    fsw     f0, 28(x10) ; xr.repeat 4, x11(=-4), 7
+```
+
+**Not covered:**
+- **Column writes with a constant stride** (`m[64*i] = …`). SLP in LLVM 22 only forms strided stores
+  for reversed contiguous stores. The loop vectorizer only forms interleave groups, and a store
+  group with gaps would need a mask. Both are limits of the generic vectorizers, not of the core.
+- A factor-4 interleaved load plus store (8 blocks live) exceeds the cost model's three blocks and
+  stays scalar.
+- Complex multiplication needs a float negation, which the VRF core doesn't vectorize yet.
+
+**Tests**
+- New `CodeGen/RISCV/xrepeat-vrf-strided.ll`:
+  - strided loads (register, constant and negative strides; 8 and 16 wide; i32 and float);
+  - a strided load feeding a dot product;
+  - strided stores (register stride, reversed float, splat);
+  - a factor-8 interleaved load;
+  - a factor-2 float interleaved store;
+  - a 4-element field, which isn't a block on this core and is left to the generic lowering.
+- `Analysis/CostModel/RISCV/xrepeat-vrf.ll`: strided costs.
+- `Transforms/LoopVectorize/RISCV/xrepeat-vrf.ll`: a factor-2 load group (`cmag`) and a factor-2
+  float store group (`ilv`), both vectorized at VF 8.
+- `Transforms/SLPVectorizer/RISCV/xrepeat-vrf.ll`: a column (strided load, stride 64) and reversed
+  stores (strided store, −4).
+- Lit: 5,672 tests pass in RISC-V CodeGen, MC and CostModel, **all** LoopVectorize, SLPVectorizer
+  and InterleavedAccess tests for every target, LoopUnroll, PhaseOrdering and CodeGenPrepare.
+- Emulator: `tests/kernels.c` gains `col`, `cmag`, `ilv`, `ilv4`, `ilvc` (constant field: mask
+  `0000` store), `rev`, `fcmag` and `filv`. **All 48 kernels are bit-identical to scalar code at
+  all 9 sizes.**
+
+### Measurement correction: the kernel window
+
+`run_benchmarks.sh` (Phase 13), and the emulator tables of earlier phases, reported steps from
+`bench_mark(0)` to `bench_mark(1)`. `bench.h` defines the kernel window as **first to last mark**,
+and two benchmarks have more than two marks:
+- **resnet8** marks 0..5, and 0..1 is only conv1, which was already noted for it.
+- **bert_tiny** marks 0..4, and 0..1 is **only the embeddings**. Its "steps" in the Phase 7, 13 and
+  14 tables measured just that stage.
+
+`run_benchmarks.sh` now reports the first-to-last window, with a column naming it. mlp, axpy,
+dotxvf and gepdot mark only 0..1, so their numbers don't change.
+
+**Results** (emulator, every checksum PASS, default sizes, full kernel window):
+
+| Benchmark | rv32im | `xrepeatint` | VRF before (Phase 15) | **VRF now** | hand |
+|---|---|---|---|---|---|
+| mlp | 18,462 | 10,143 | 10,174 | **10,174** | 10,225 |
+| axpy | 9,012 | 4,760 | 4,885 | **4,885** | 5,885 |
+| dotxvf | 28,706 | 15,400 | 15,398 | **15,398** | 11,408 |
+| gepdot | 28,695 | 22,555 | 22,555 | **22,555** | 23,832 |
+| resnet8 (0..5) | 73,143,007 | 54,133,975 | 55,548,485 | **55,548,485** | 59,132,684 |
+| bert_tiny (0..4) | 94,486,328 | 51,958,023 | 51,985,643 | **51,709,352** | 53,892,405 |
+
+- **bert_tiny:** its two scores × V loops (a column of V, stride 512 bytes) went from 23 to 9
+  instructions: 8 single `flw` became one `flw` + REPEAT, the same as on `xrepeatint`. Over the
+  kernel that is −505,667 instructions (−2.9%) and −276,291 steps (−0.5%). Steps fall less, because
+  8 `flw` and one `flw` + REPEAT are both 8 steps; the saving is the per-element address arithmetic.
+  The VRF build is now the fastest bert_tiny.
+- The "VRF before" column for resnet8 and bert_tiny comes from rerunning Phase 15's assembly (bert)
+  or from unchanged assembly (resnet8). `compare_asm.sh` shows that only bert_tiny's VRF code
+  changed in this phase.
+- **New finding (fixed in Phase 17): resnet8.** Over the whole network, the VRF build takes 2.6%
+  more steps than `xrepeatint` (55.5M vs 54.1M) and 45% more instructions (39.7M vs 27.5M). The old
+  conv1-only window hid this.
+
+## Phase 17 — resnet8: closing the gap to `xrepeatint`
+
+**Starting point** (Phase 16, full kernel window): resnet8 on the VRF core took 55.5M steps against
+54.1M on `xrepeatint` (+2.6%), and 39.7M instructions against 27.5M (+45%). Comparing the innermost
+loops of the two builds (`asm_compare/summary.txt`) and profiling them on the emulator (new
+`rvsim.py --profile FILE`: per-pc counts from `bench_mark(0)` on) showed four causes.
+
+### 1. Chained reduction loops kept the x-register round trip
+
+24 of the 29 dot-product loops were 12 instructions, not 9: `fmv.s` of a zero, then `xr.mac`, then
+`xr.mv.xv` and `add`. resnet8's convolutions chain reduction loops: one loop's sum is the start
+value of the next (`%acc2 = phi [%acc1, %mid], [%acc3, %l2]`). Phase 14's
+`keepXRFAccumulatorInFPR` only accepted single-input (LCSSA) phis after the loop, so it gave up.
+
+**Fix** (`RISCVCodeGenPrepare.cpp`): a phi with several inputs gets `bitcast %acc.next.f to i32` at
+the end of the incoming block. When the next loop is rewritten too, the back-to-back bitcasts
+cancel, and both loops share one f-register accumulator. Test: `chained_loops` in
+`xrepeat-vrf-ops.ll`.
+
+### 2. 16-channel dot products stayed scalar
+
+The three convolutions with 16 input channels unrolled `for (i < 16) acc += w[i]*x[i]` into 16
+scalar multiply-adds (67-instruction loops). SLP's horizontal reduction tried 16 wide, because its
+width comes from the register width, 512 bits. A 16-wide multiply of two vectors had an **invalid**
+cost, since it doesn't fit next to a zero addend (Phase 11). On an invalid cost SLP stops; it
+retries narrower only after a valid but unprofitable one. The integer core starts at 8 (256-bit
+registers) and succeeds.
+
+**Fix** (`RISCVTargetTransformInfo.cpp`, `getArithmeticInstrCost`): that multiply costs
+`4 × elements` (64), which is what its lowering emits: per element, two `xr.mv.xv`, a `mul` and an
+`xr.mv.vx`. SLP then retries 8 wide and vectorizes the sum as two 8-wide halves. Tests: the cost
+model's `mul <16 x i32>` is now 64; SLP test `dot16x`.
+
+### 3. A sum of two products kept four blocks live
+
+SLP emits `reduce.add(a0*b0 + a1*b1)`, so the sum is a fourth block, and four 8-wide blocks are
+the whole register file.
+
+**Fix** (`RISCVISelLowering.cpp` and `RISCVInstrInfoXRepeat.td`):
+- New nodes `XRF_ADDRED(acc, v)` and `XRF_MACRED(acc, a, b)`: an f32 accumulator holding i32 bits,
+  matched to the Phase 12 reduction pseudos.
+- `combineXRFVecReduceAdd`: a `reduce.add` of a tree of single-use adds becomes a chain with one
+  reduction per leaf. A product is `xr.mac` mask `0110` (8 wide only; at 16 wide, two vectors and
+  the accumulator don't fit, so the product is reduced as a vector).
+- `combineXRFAddReduce`: `x + reduce(…)` starts the chain from x's bits instead of 0, so an
+  accumulator kept in an f register (item 1, Phase 14) flows through it.
+- `shouldReassociateReduction` is false for VRF types, so the generic combine doesn't merge the
+  reductions back.
+
+Tests: `red_sum_of_products` and `loop_red_sum_of_products` in `xrepeat-vrf-ops.ll`.
+
+### 4. The scheduler loaded every block first
+
+Even with the chain, every block was loaded before the first MAC, and they spilled. There is no
+scheduling model for the generic RISC-V CPU, so every load gets the default latency of 4. Bottom-up,
+after placing the second MAC, its block loads aren't ready yet, so the only candidate is the first
+MAC. Every load then ends up above both MACs (`Pick Bot ONLY1` in `-debug-only=machine-scheduler`).
+
+**Fix** (`RISCVTargetMachine.cpp`): a scheduling-DAG mutation, `XRFBlockLoadLatencyMutation` (VRF
+core only), gives the data edges out of XRepeat block loads latency 1, so register pressure decides
+the order. Hiding load latency is never worth spilling a block (16 instructions). Also
+(`RISCVInstrInfo.cpp`, `shouldClusterMemOps`): XRepeat block loads and stores are never clustered,
+because pairing two blocks makes both live at once.
+
+Result for one loop iteration of a 16-channel sum (`acc` kept in `fa5`):
+
+```
+    flw ft0, -32(a0) ; xr.repeat 1, a3, 7
+    flw fs8, -32(a1) ; xr.repeat 1, a3, 7
+    xr.mac fa5, ft0, fs8, fa5 ; xr.repeat 6, zero, 7
+    flw ft0, 0(a0)   ; xr.repeat 1, a3, 7
+    flw fs8, 0(a1)   ; xr.repeat 1, a3, 7
+    xr.mac fa5, ft0, fs8, fa5 ; xr.repeat 6, zero, 7
+```
+
+### Results
+
+All 24 runs PASS. Steps and instructions are over the full kernel window:
+
+| Benchmark | rv32im | `xrepeatint` | VRF, Phase 16 | **VRF now** | hand |
+|---|---|---|---|---|---|
+| mlp | 18,462 | 10,143 | 10,174 | **10,174** | 10,225 |
+| axpy | 9,012 | 4,760 | 4,885 | **4,885** | 5,885 |
+| dotxvf | 28,706 | 15,400 | 15,398 | **15,398** | 11,408 |
+| gepdot | 28,695 | 22,555 | 22,555 | **22,555** | 23,832 |
+| resnet8 | 73,143,007 | 54,133,975 | 55,548,485 | **45,936,351** | 59,132,684 |
+| bert_tiny | 94,486,328 | 51,958,023 | 51,709,352 | **51,709,352** | 53,892,405 |
+
+- **resnet8:**
+  - steps −17.3% over Phase 16, now **15.1% fewer than `xrepeatint`** and 22% fewer than the
+    hand-written version;
+  - instructions 39.7M → **19.3M** (−51%; `xrepeatint` 27.5M).
+- gepdot and bert_tiny only changed instruction order; their step counts are identical.
+- Lit: 5,672 tests pass, the same suites as Phase 16. The differential kernel test still gives
+  bit-identical results for all 48 kernels at all 9 sizes.
+- In the existing tests, a 16-wide float `fmul` + `fadd` no longer spills 32 registers, and some
+  loads move next to their users.
+
+### Remaining gap: LICM hoists block loads without regard to register pressure
+
+Once the 16-channel sums are vectorized, the late full unroll unrolls the 3-iteration `kx` loop. The
+late LICM then hoists the 3×3 pixels' 18 blocks out of the output-channel loop, because they don't
+depend on the channel. 18 blocks are 144 f registers, so they are spilled once per output pixel and
+reloaded per channel (551 spill and reload lines in resnet8, up from 198).
+
+The integer core's IR has the same hoisting. In steps it costs little: reloading a block (8 `flw`)
+takes as many steps as loading it from memory (`flw` + REPEAT), so the extra cost is only the spill
+stores per pixel. Fixing it would need an alias-aware sinking of the loads back into the loop, or
+LICM to account for register pressure; burst spills would cut instructions but not steps.
+
+## Phase 18 — axpy and dotxvf
+
+### axpy: a metric, not a gap
+
+On the VRF core axpy took 4,885 steps against `xrepeatint`'s 4,760. Per iteration of 8 elements:
+
+| | `xrepeatint` | VRF core |
+|---|---|---|
+| load x, load y, MAC | 9 + 9 + 9 | 9 + 9 + 9 |
+| store y | 8 single `sw` = 8 | `fsw` + REPEAT = 1 + **1** + 7 = 9 |
+| pointers, branch | 3 | 3 |
+| total | 38 steps, 17 instructions | 39 steps, 11 instructions |
+
+The whole difference is the REPEAT instruction of the store burst. The GPR core can't repeat
+stores, so it writes them out. Under the "steps" metric a burst always costs one step more than the
+same work written out as single instructions, because the REPEAT itself is counted. Whether a REPEAT
+takes an issue cycle is a hardware question.
+
+**Emulator:** a third count, `ops` = steps − REPEAT instructions (the element operations, i.e. the
+work if a REPEAT costs nothing). `run_benchmarks.sh` shows it next to steps. axpy is
+**4,385 ops on both cores**: the same work, with 35% fewer instructions on the VRF core. mlp's +31 is
+one `fmv.x.w` per hidden neuron (32 of them): the sum stays in an f register and the ReLU is
+integer code.
+
+### dotxvf: fusing the row loops before the vectorizers
+
+`y[u] = A[u]·x` for 4 rows. The early full unroll makes 4 `k` loops, which are vectorized one by one,
+each reloading `x`: 15,398 steps against 11,408 for the hand-written version, which loads each block
+of `x` once for all 4 rows. On the VRF core the 4 accumulators are single f registers (Phase 14), so a
+fused loop needs only the `x` block plus one `A` block at a time.
+
+Unroll-and-jam (`-enable-unroll-and-jam`) can't help: it runs after the loop vectorizer, and the
+early full unroll has already removed the loop nest. An `opt` prototype at the vectorizer-start
+extension point (LoopFuse, `indvars`, GVN, then `-force-vector-width=8`) gave 11,154 steps.
+
+**Changes**
+
+| File | Change |
+|---|---|
+| `RISCVTargetMachine.cpp`, `RISCVPassRegistry.def` | New function pass `riscv-xrepeat-loop-fusion`, added at the vectorizer-start extension point at O2 and above. For functions compiled for the VRF core only, it runs LoopFuse (fuses adjacent loops with the same trip count and no dependences) on the loops that **share a load** (see below), then, if anything was fused, `indvars` (one induction variable) and GVN (one load of `x[k]`). Hidden flag `-riscv-xrepeat-loop-fusion=false` for A/B runs. |
+| `RISCVTargetTransformInfo.{h,cpp}` | Register estimate for the loop vectorizer: 5 units, with an 8-wide block 1 unit and a 16-wide one 3 (before: 3 units, 1 and 2). The vectorizer counts each loaded vector as live from the top of the body; the fused dotxvf loop counts 5, yet since Phase 17 the backend loads each `A` block right before its MAC and only 2 are live. A 16-wide loop with two vector values (6 units) is still rejected, as Phase 12 requires for axpy. |
+
+The fused loop, the hand-written shape (one load of `x` in `ft0`, four MACs into four accumulators):
+
+```
+.LBB0_3:
+    flw  fs8, 0(a0) ; xr.repeat 1, a5, 7      # x[k..k+7]
+    flw  ft0, 0(a4) ; xr.repeat 1, a5, 7      # A0
+    xr.mac fa5, ft0, fs8, fa5 ; xr.repeat 6, zero, 7
+    flw  fs8, 0(a3) ; xr.repeat 1, a5, 7      # A1
+    xr.mac fa4, ft0, fs8, fa4 ; xr.repeat 6, zero, 7
+    ...                                       # A2, A3
+    bne  a1, a6, .LBB0_3
+```
+
+**Only loops that share a load.** LoopFuse fuses every legal pair, with no profitability check.
+Fusing everything cost resnet8 0.5%: its two convolutions with different kernels that read the same
+image were fused as whole nests, and so was a pair of unrelated dot loops. That gives one loop body
+with more live blocks but no shared load. The pass therefore picks the pairs itself:
+- **Which pairs share a load** (`worthFusing`):
+  - two innermost loops share a load when they load through pointers with the same `{start, step}`
+    as functions of their loops (e.g. `x[k]` in each row loop; loads of loop-invariant addresses
+    don't count);
+  - two loop nests qualify when they have the same shape (one subloop per level) and their innermost
+    loops share a load once each loop of the second nest is matched with its counterpart in the
+    first. `equalModLoops` compares the address expressions modulo that matching: in bert_tiny's Q,
+    K and V projections, three `dense` nests reading `hidden[t][k]`, each address depends on its own
+    nest's `t` loop.
+- **Blocking the other pairs:** every other loop gets a barrier in its preheader, a volatile load of
+  a dummy stack slot. LoopFuse rejects a pair when it can't move a preheader instruction, and it
+  never moves a volatile one. The barriers and the slot are deleted after fusion. The loops are put
+  into loop-simplify form first, so the preheader holding the barrier is the one LoopFuse checks.
+- **Cleanup only after fusion:** `indvars` and GVN run only if the number of loops went down. On
+  unfused code GVN alone lengthened resnet8's live ranges into more spills.
+
+Fusions: dotxvf its 4 row loops; bert_tiny the Q/K/V nests at all three levels plus one pair of dot
+loops; resnet8, gepdot, mlp and axpy none (resnet8's assembly is byte-identical to Phase 17's).
+
+**Tests**
+- New `CodeGen/RISCV/xrepeat-vrf-loop-fusion.ll`:
+  - four sibling row loops fused into one, with 4 accumulators and one load of `x`;
+  - two loops over unrelated arrays kept apart;
+  - two same-shaped nests reading the same `in[t][k]` fused at both levels;
+  - unchanged without XRepeat, and with the flag off;
+  - with `default<O2>`, the fused loop vectorized at VF 8 (5 block loads, 4 in-loop reductions).
+- `CodeGen/RISCV/print-pipeline-passes.ll` now prints the pass by its registered name.
+- Lit: all suites of Phase 17 plus `Transforms/LoopFusion` pass (5,707 tests).
+  `llvm/test/Other` has 10 failures that exit with status 127: tools such as `llvm-profdata` and
+  `llvm-bcanalyzer` aren't built here. They are unrelated.
+- Emulator: all 48 kernels are bit-identical, and more of them vectorize (2,158 REPEATs at N=128,
+  up from 1,962).
+
+**Results** (all 24 runs PASS; full kernel window):
+
+| Benchmark | `xrepeatint` steps / ops | VRF, Phase 17 steps | **VRF now steps / ops** | hand steps / ops |
+|---|---|---|---|---|
+| mlp | 10,143 / 9,183 | 10,174 | **10,174 / 9,214** | 10,225 / 9,265 |
+| axpy | 4,760 / 4,385 | 4,885 | **4,885 / 4,385** | 5,885 / 5,385 |
+| dotxvf | 15,400 / 13,864 | 15,398 | **11,154 / 10,002** | 11,408 / 10,256 |
+| gepdot | 22,555 / 20,506 | 22,555 | **22,555 / 20,505** | 23,832 / 21,656 |
+| resnet8 | 54,133,975 / 50,323,431 | 45,936,351 | **45,936,351 / 42,125,807** | 59,132,684 / 54,413,852 |
+| bert_tiny | 51,958,023 / 47,014,407 | 51,709,352 | **48,678,563 / 43,994,707** | 53,892,405 / 48,961,749 |
+
+- **dotxvf:** −27.6% steps, **below the hand-written version** (11,154 vs 11,408).
+- **bert_tiny:** −5.9%, from fusing the Q/K/V projections, which load each block of `hidden`
+  once for three dot products. It now takes 6.3% fewer steps than `xrepeatint` and 9.7% fewer than
+  the hand-written version.
+- **resnet8:** unchanged. With every legal pair fused it was +0.5% (46,167,100); fusing only loops
+  that share a load leaves it byte-identical to Phase 17. bert_tiny with every pair fused was
+  48,656,545, so the selective rule keeps 99% of that gain.
+- The VRF core now takes the fewest steps of all four versions on dotxvf, gepdot (tied), resnet8 and
+  bert_tiny. On axpy it is level with `xrepeatint` in ops, and on mlp +31 ops.
 
 ## Installing from scratch
 
@@ -852,20 +1689,23 @@ everything, which takes much longer. The tools end up in `build-22/bin/`.
 # The new extension is known
 build-22/bin/llc -mtriple=riscv32 -mattr=help 2>&1 | grep -i xrepeat
 
-# The assembler encodes the new instructions
-echo 'xr.mac x5, x16, x24, x5' | build-22/bin/llvm-mc -triple=riscv32 -mattr=+xrepeat -show-encoding
+# The assembler encodes the new instructions (VRF core, and the original GPR core)
+echo 'xr.mac f8, f16, f24, f8' | build-22/bin/llvm-mc -triple=riscv32 -mattr=+xrepeat -show-encoding
+echo 'xr.mac x5, x16, x24, x5' | build-22/bin/llvm-mc -triple=riscv32 -mattr=+xrepeatint -show-encoding
 
-# XRepeat regression tests (all should pass)
-build-22/bin/llvm-lit -v llvm/test/MC/RISCV/xrepeat-*.s llvm/test/CodeGen/RISCV/xrepeat-*.ll \
-  llvm/test/Analysis/CostModel/RISCV/xrepeat.ll llvm/test/Transforms/LoopVectorize/RISCV/xrepeat.ll
+# XRepeat and XRepeatInt regression tests (all should pass)
+build-22/bin/llvm-lit -v llvm/test/MC/RISCV/xrepeat*.s llvm/test/CodeGen/RISCV/xrepeat*.ll \
+  llvm/test/Analysis/CostModel/RISCV/xrepeat*.ll llvm/test/Transforms/*/RISCV/xrepeat*.ll
 
-# Assembly of the benchmark, from the repo root (writes .custom_repeat_inst/asm/)
-.custom_repeat_inst/build_asm.sh
-grep -c xr.repeat .custom_repeat_inst/asm/main_mlp.dis   # > 0
+# Assembly of the benchmarks, from the repo root (writes .custom_repeat_inst/asm_compare/)
+.custom_repeat_inst/compare_asm.sh
+grep -c xr.repeat .custom_repeat_inst/asm_compare/mlp/base_xrepeat.dis   # > 0
 ```
 
-Use it with `--target=riscv32-unknown-elf -march=rv32im_xrepeat`. Without `_xrepeat` in
-`-march`, the compiler behaves like the original, unmodified LLVM 22.
+Use it with `--target=riscv32-unknown-elf` and `-march=rv32im_xrepeat` (the VRF core, still being
+developed; see Phase 9) or `-march=rv32im_xrepeatint` (the original GPR core, which the
+auto-vectorizer fully supports). Without either in `-march`, the compiler behaves like the
+original, unmodified LLVM 22.
 
 After editing any `.td` or `.cpp` file, rebuild `clang` too, not only `llc`. `clang` contains
 its own copy of the back end, and a stale `clang` once produced a false test failure.
@@ -876,11 +1716,9 @@ its own copy of the back end, and a stale `clang` once produced a false test fai
 # Build (from the repo root)
 ninja -C build-22 clang llc opt llvm-mc llvm-objdump
 
-# XRepeat tests only
-build-22/bin/llvm-lit -v llvm/test/MC/RISCV/xrepeat-*.s llvm/test/CodeGen/RISCV/xrepeat-*.ll \
-  llvm/test/Analysis/CostModel/RISCV/xrepeat.ll llvm/test/Transforms/LoopVectorize/RISCV/xrepeat.ll \
-  llvm/test/Transforms/SLPVectorizer/RISCV/xrepeat-splat.ll \
-  llvm/test/Transforms/LoopUnroll/RISCV/xrepeat-keep-small-loops.ll
+# XRepeat and XRepeatInt tests only
+build-22/bin/llvm-lit -v llvm/test/MC/RISCV/xrepeat*.s llvm/test/CodeGen/RISCV/xrepeat*.ll \
+  llvm/test/Analysis/CostModel/RISCV/xrepeat*.ll llvm/test/Transforms/*/RISCV/xrepeat*.ll
 
 # All RISC-V suites touched by these changes
 build-22/bin/llvm-lit -q llvm/test/CodeGen/RISCV llvm/test/MC/RISCV \
@@ -888,8 +1726,14 @@ build-22/bin/llvm-lit -q llvm/test/CodeGen/RISCV llvm/test/MC/RISCV \
   llvm/test/Transforms/SLPVectorizer/RISCV llvm/test/Transforms/InterleavedAccess/RISCV \
   llvm/test/Transforms/LoopUnroll llvm/test/Transforms/PhaseOrdering
 
-# Assembly of every benchmark (plain/rv32im, plain/xrepeat, hand) -> asm_compare/
+# Assembly of every benchmark (plain/rv32im, plain/xrepeatint, hand) -> asm_compare/
 .custom_repeat_inst/compare_asm.sh            # extra clang flags are passed through, e.g. -DNC=256
+
+# Run on the emulator (Phase 13): benchmarks in all four versions, and the VRF differential test
+.custom_repeat_inst/sim/run_benchmarks.sh                 # all six, default sizes (~10 min, resnet8 dominates)
+.custom_repeat_inst/sim/run_benchmarks.sh mlp -- -DINPUT_SIZE=67 -DBENCH_CUSTOM_SIZES
+.custom_repeat_inst/sim/run_tests.sh                      # ~1 min
+.custom_repeat_inst/sim/build.sh vrf mine my.c rv32im_xrepeat   # any single program
 
 # A/B: the Phase 7 unroll rule off
 build-22/bin/clang ... -mllvm -riscv-xrepeat-keep-small-loops=false
@@ -899,7 +1743,7 @@ python3 llvm/utils/update_llc_test_checks.py --llc-binary build-22/bin/llc <test
 python3 llvm/utils/update_analyze_test_checks.py --opt-binary build-22/bin/opt <test.ll>
 
 # See what the vectorizer decided, and why
-build-22/bin/clang --target=riscv32-unknown-elf -march=rv32im_xrepeat -O2 -S main_mlp.c \
+build-22/bin/clang --target=riscv32-unknown-elf -march=rv32im_xrepeatint -O2 -S main_mlp.c \
   -Rpass=loop-vectorize -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize
 ```
 

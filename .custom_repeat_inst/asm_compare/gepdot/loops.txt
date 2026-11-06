@@ -1,5 +1,5 @@
 ============================== gepdot / base_rv32im: 3 innermost loops ==============================
---- main .LBB0_1: 17 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 1 mul
+--- main .LBB0_1: 17 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 1 mul
 	mul	x14, x10, x12
 	srli	x14, x14, 16
 	sub	x15, x10, x14
@@ -18,7 +18,7 @@
 	addi	x11, x11, 4
 	bne	x10, x8, .LBB0_1
 
---- main .LBB0_3: 66 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 8 sw, 0 mul
+--- main .LBB0_3: 66 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 8 sw, 0 mul
 	mulhu	x29, x11, x6
 	mulhu	x31, x12, x6
 	mulhu	x8, x13, x6
@@ -86,7 +86,7 @@
 	mv	x28, x29
 	bne	x29, x7, .LBB0_3
 
---- main .LBB0_5: 28 insns, 0 xr.mac, 0 xr.repeat, 9 lw, 0 sw, 8 mul
+--- main .LBB0_5: 28 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 9 lw, 0 sw, 8 mul
 	lw	x28, 0(x6)
 	lw	x29, -16(x10)
 	lw	x30, -12(x10)
@@ -117,7 +117,7 @@
 	bne	x6, x7, .LBB0_5
 
 ============================== gepdot / base_xrepeat: 3 innermost loops ==============================
---- main .LBB0_1: 17 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 1 mul
+--- main .LBB0_1: 17 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 1 mul
 	mul	x14, x10, x12
 	srli	x14, x14, 16
 	sub	x15, x10, x14
@@ -136,7 +136,7 @@
 	addi	x11, x11, 4
 	bne	x10, x8, .LBB0_1
 
---- main .LBB0_3: 66 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 8 sw, 0 mul
+--- main .LBB0_3: 66 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 8 sw, 0 mul
 	mulhu	x29, x11, x6
 	mulhu	x31, x12, x6
 	mulhu	x8, x13, x6
@@ -204,7 +204,7 @@
 	mv	x28, x29
 	bne	x29, x7, .LBB0_3
 
---- main .LBB0_5: 8 insns, 1 xr.mac, 2 xr.repeat, 2 lw, 0 sw, 0 mul
+--- main .LBB0_5: 8 insns, 1 xr.mac, 0 other repeated, 2 xr.repeat, 2 lw, 0 sw, 0 mul
 	lw	x15, 0(x13)
 	lw	x16, 0(x10)
 	xr.repeat	1, x12, x11
@@ -214,8 +214,8 @@
 	addi	x13, x13, 4
 	bne	x10, x14, .LBB0_5
 
-============================== gepdot / hand: 3 innermost loops ==============================
---- main .LBB0_1: 17 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 1 sw, 1 mul
+============================== gepdot / base_vrf: 3 innermost loops ==============================
+--- main .LBB0_1: 17 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 1 mul
 	mul	x14, x10, x12
 	srli	x14, x14, 16
 	sub	x15, x10, x14
@@ -234,7 +234,7 @@
 	addi	x11, x11, 4
 	bne	x10, x8, .LBB0_1
 
---- main .LBB0_3: 66 insns, 0 xr.mac, 0 xr.repeat, 0 lw, 8 sw, 0 mul
+--- main .LBB0_3: 66 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 8 sw, 0 mul
 	mulhu	x29, x11, x6
 	mulhu	x31, x12, x6
 	mulhu	x8, x13, x6
@@ -302,7 +302,105 @@
 	mv	x28, x29
 	bne	x29, x7, .LBB0_3
 
---- main .LBB0_5: 67 insns, 8 xr.mac, 17 xr.repeat, 12 lw, 3 sw, 0 mul
+--- main .LBB0_5: 8 insns, 1 xr.mac, 0 other repeated, 2 xr.repeat, 2 lw, 0 sw, 0 mul
+	flw	f15, 0(x12)
+	flw	f24, 0(x10)
+	xr.repeat	1, x11, 7
+	addi	x10, x10, 32
+	xr.mac	f0, f24, f15, f0
+	xr.repeat	11, x0, 7
+	addi	x12, x12, 4
+	bne	x10, x13, .LBB0_5
+
+============================== gepdot / hand: 3 innermost loops ==============================
+--- main .LBB0_1: 17 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 1 sw, 1 mul
+	mul	x14, x10, x12
+	srli	x14, x14, 16
+	sub	x15, x10, x14
+	slli	x15, x15, 16
+	srli	x15, x15, 17
+	add	x14, x15, x14
+	slli	x14, x14, 16
+	srli	x14, x14, 18
+	slli	x15, x14, 3
+	add	x14, x10, x14
+	addi	x10, x10, 1
+	sub	x14, x14, x15
+	and	x14, x14, x13
+	addi	x14, x14, -3
+	sw	x14, 0(x11)
+	addi	x11, x11, 4
+	bne	x10, x8, .LBB0_1
+
+--- main .LBB0_3: 66 insns, 0 xr.mac, 0 other repeated, 0 xr.repeat, 0 lw, 8 sw, 0 mul
+	mulhu	x29, x11, x6
+	mulhu	x31, x12, x6
+	mulhu	x8, x13, x6
+	mulhu	x9, x14, x6
+	mulhu	x18, x15, x6
+	mulhu	x19, x16, x6
+	mulhu	x20, x17, x6
+	mulhu	x21, x28, x6
+	srli	x30, x29, 2
+	andi	x29, x29, -4
+	add	x30, x29, x30
+	srli	x29, x31, 2
+	andi	x31, x31, -4
+	add	x31, x31, x29
+	srli	x29, x8, 2
+	andi	x8, x8, -4
+	add	x8, x8, x29
+	srli	x29, x9, 2
+	andi	x9, x9, -4
+	add	x9, x9, x29
+	srli	x29, x18, 2
+	andi	x18, x18, -4
+	add	x18, x18, x29
+	srli	x29, x19, 2
+	andi	x19, x19, -4
+	add	x19, x19, x29
+	srli	x29, x20, 2
+	andi	x20, x20, -4
+	add	x20, x20, x29
+	srli	x29, x21, 2
+	andi	x21, x21, -4
+	add	x21, x21, x29
+	addi	x29, x28, 1
+	addi	x11, x11, 1
+	addi	x12, x12, 1
+	addi	x13, x13, 1
+	addi	x14, x14, 1
+	addi	x15, x15, 1
+	addi	x16, x16, 1
+	addi	x17, x17, 1
+	sub	x21, x28, x21
+	not	x20, x20
+	sub	x19, x28, x19
+	sub	x18, x28, x18
+	sub	x9, x28, x9
+	sub	x8, x28, x8
+	sub	x31, x28, x31
+	sub	x30, x28, x30
+	addi	x21, x21, -2
+	add	x28, x20, x28
+	addi	x18, x18, 1
+	addi	x9, x9, 2
+	addi	x8, x8, 3
+	addi	x31, x31, 4
+	addi	x30, x30, 5
+	sw	x21, -16(x5)
+	sw	x28, -12(x5)
+	sw	x19, -8(x5)
+	sw	x18, -4(x5)
+	sw	x9, 0(x5)
+	sw	x8, 4(x5)
+	sw	x31, 8(x5)
+	sw	x30, 12(x5)
+	addi	x5, x5, 32
+	mv	x28, x29
+	bne	x29, x7, .LBB0_3
+
+--- main .LBB0_5: 67 insns, 8 xr.mac, 0 other repeated, 17 xr.repeat, 12 lw, 3 sw, 0 mul
 	sw	x16, 8(x2)
 	li	x10, 4
 	lw	x24, 0(x12)

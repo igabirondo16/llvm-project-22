@@ -3442,5 +3442,5 @@ b_s3p = .L_MergedGlobals+1168
 	.size	b_s3p, 256
 pooled = .L_MergedGlobals+1424
 	.size	pooled, 256
-	.ident	"clang version 22.1.8 (https://github.com/igabirondo16/llvm-project-22.git d5087d6b74df14fbf64ee88049d1ce9a2c66567d)"
+	.ident	"clang version 22.1.8 (https://github.com/igabirondo16/llvm-project-22.git 477e688a98d61e1ca9b3401134098175fdecb835)"
 	.section	".note.GNU-stack","",@progbits

@@ -1403,6 +1403,10 @@ bool TargetTransformInfo::preferInLoopReduction(RecurKind Kind,
   return TTIImpl->preferInLoopReduction(Kind, Ty);
 }
 
+bool TargetTransformInfo::preferFusedFMulAddReduction() const {
+  return TTIImpl->preferFusedFMulAddReduction();
+}
+
 bool TargetTransformInfo::preferAlternateOpcodeVectorization() const {
   return TTIImpl->preferAlternateOpcodeVectorization();
 }

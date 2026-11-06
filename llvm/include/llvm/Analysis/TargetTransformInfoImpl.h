@@ -1083,6 +1083,7 @@ public:
   virtual bool preferInLoopReduction(RecurKind Kind, Type *Ty) const {
     return false;
   }
+  virtual bool preferFusedFMulAddReduction() const { return false; }
   virtual bool preferAlternateOpcodeVectorization() const { return true; }
 
   virtual bool preferPredicatedReductionSelect() const { return false; }

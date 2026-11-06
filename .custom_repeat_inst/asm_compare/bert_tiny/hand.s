@@ -2978,5 +2978,5 @@ b_pool = .L_MergedGlobals.1
 	.size	b_pool, 512
 pooled = .L_MergedGlobals.1+512
 	.size	pooled, 512
-	.ident	"clang version 22.1.8 (https://github.com/igabirondo16/llvm-project-22.git d5087d6b74df14fbf64ee88049d1ce9a2c66567d)"
+	.ident	"clang version 22.1.8 (https://github.com/igabirondo16/llvm-project-22.git 477e688a98d61e1ca9b3401134098175fdecb835)"
 	.section	".note.GNU-stack","",@progbits
