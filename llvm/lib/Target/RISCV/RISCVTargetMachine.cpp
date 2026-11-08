@@ -705,6 +705,10 @@ bool RISCVPassConfig::addILPOpts() {
   return true;
 }
 
+// Loop attribute RISCVXRepeatUnrollAndJamPass puts on the output loops it
+// jams, so that RISCVXRepeatLoopFusionPass leaves those nests alone.
+static constexpr const char *XRepeatJammedAttr = "riscv.xrepeat.jammed";
+
 static cl::opt<bool> XRepeatLoopFusion(
     "riscv-xrepeat-loop-fusion",
     cl::desc("XRepeat (VRF core): fuse adjacent loops before the vectorizers"),
@@ -800,6 +804,21 @@ class RISCVXRepeatLoopFusionPass
     return worthFusing(L0->getSubLoops()[0], L1->getSubLoops()[0], SE, Map);
   }
 
+  // L is, contains or is inside an output loop unroll-and-jammed by
+  // RISCVXRepeatUnrollAndJamPass, which runs first. Such a nest isn't fused
+  // with anything: its inner loops already feed every load to 8 or 16
+  // outputs, and fusing two of them (bert_tiny's Q, K and V projections)
+  // would put 32 or 48 accumulators in one loop.
+  static bool inJammedNest(const Loop *L) {
+    for (const Loop *P = L; P; P = P->getParentLoop())
+      if (getBooleanLoopAttribute(P, XRepeatJammedAttr))
+        return true;
+    for (const Loop *Sub : L->getLoopsInPreorder())
+      if (getBooleanLoopAttribute(Sub, XRepeatJammedAttr))
+        return true;
+    return false;
+  }
+
 public:
   RISCVXRepeatLoopFusionPass(const RISCVTargetMachine &TM) : TM(TM) {}
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM) {
@@ -833,7 +852,8 @@ public:
             (!Prev || DT.dominates(Prev->getHeader(), S->getHeader())))
           Prev = S;
       LoopMap Map;
-      if (!Prev || worthFusing(Prev, L, SE, Map))
+      if (!Prev || (!inJammedNest(Prev) && !inJammedNest(L) &&
+                    worthFusing(Prev, L, SE, Map)))
         continue;
       if (!Slot)
         Slot = new AllocaInst(Type::getInt8Ty(F.getContext()), 0, "",
@@ -1249,6 +1269,9 @@ public:
         !TM.getSubtarget<RISCVSubtarget>(F).hasXRepeatVRFVectors())
       return PreservedAnalyses::all();
 
+    // Loop-simplify form first (every loop with a preheader and a single
+    // latch), which the matching requires.
+    FAM.invalidate(F, LoopSimplifyPass().run(F, FAM));
     auto &LI = FAM.getResult<LoopAnalysis>(F);
     auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(F);
     SmallVector<std::pair<Loop *, unsigned>, 4> Candidates;
@@ -1294,6 +1317,7 @@ public:
       // the loop vectorizer off the inner loops: SLP vectorizes across the
       // jammed accumulators instead.
       addStringMetadataToLoop(L, "llvm.loop.unroll.disable");
+      addStringMetadataToLoop(L, XRepeatJammedAttr, 1);
       if (XRepeatUnrollJam == XRepeatUJMode::Column)
         for (Loop *Sub : Subs)
           addStringMetadataToLoop(Sub, "llvm.loop.isvectorized", 1);
@@ -1327,8 +1351,8 @@ void RISCVTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
       [this](FunctionPassManager &FPM, OptimizationLevel Level) {
         if (Level.getSpeedupLevel() >= 2) {
           FPM.addPass(RISCVXRepeatFMinMaxPass(*this));
-          FPM.addPass(RISCVXRepeatLoopFusionPass(*this));
           FPM.addPass(RISCVXRepeatUnrollAndJamPass(*this));
+          FPM.addPass(RISCVXRepeatLoopFusionPass(*this));
         }
       });
 }

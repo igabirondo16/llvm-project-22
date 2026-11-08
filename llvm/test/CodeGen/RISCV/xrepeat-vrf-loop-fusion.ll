@@ -227,3 +227,72 @@ for.body21:                                       ; preds = %for.cond18.preheade
   %exitcond55.not = icmp eq i32 %inc28, 64
   br i1 %exitcond55.not, label %for.cond.cleanup20, label %for.body21
 }
+
+; The same nests, already unroll-and-jammed by riscv-xrepeat-unroll-jam (the
+; riscv.xrepeat.jammed loop attribute): not fused, their inner loops already
+; share every load among the jammed outputs.
+; FUSED-LABEL: @nests_jammed(
+; FUSED:       for.body4:
+; FUSED:       for.cond18.preheader:
+; FUSED:       for.body21:
+define void @nests_jammed() {
+entry:
+  br label %for.cond1.preheader
+
+for.cond1.preheader:                              ; preds = %entry, %for.cond.cleanup3
+  %t.050 = phi i32 [ 0, %entry ], [ %inc9, %for.cond.cleanup3 ]
+  %arrayidx = getelementptr inbounds nuw [64 x i32], ptr @in, i32 %t.050
+  br label %for.body4
+
+for.cond.cleanup3:                                ; preds = %for.body4
+  %arrayidx7 = getelementptr inbounds nuw i32, ptr @oq, i32 %t.050
+  store i32 %add, ptr %arrayidx7, align 4
+  %inc9 = add nuw nsw i32 %t.050, 1
+  %exitcond54.not = icmp eq i32 %inc9, 8
+  br i1 %exitcond54.not, label %for.cond18.preheader, label %for.cond1.preheader, !llvm.loop !0
+
+for.body4:                                        ; preds = %for.cond1.preheader, %for.body4
+  %k.049 = phi i32 [ 0, %for.cond1.preheader ], [ %inc, %for.body4 ]
+  %a.048 = phi i32 [ 0, %for.cond1.preheader ], [ %add, %for.body4 ]
+  %arrayidx5 = getelementptr inbounds nuw i32, ptr %arrayidx, i32 %k.049
+  %0 = load i32, ptr %arrayidx5, align 4
+  %arrayidx6 = getelementptr inbounds nuw i32, ptr @wq, i32 %k.049
+  %1 = load i32, ptr %arrayidx6, align 4
+  %mul = mul nsw i32 %1, %0
+  %add = add nsw i32 %mul, %a.048
+  %inc = add nuw nsw i32 %k.049, 1
+  %exitcond.not = icmp eq i32 %inc, 64
+  br i1 %exitcond.not, label %for.cond.cleanup3, label %for.body4
+
+for.cond18.preheader:                             ; preds = %for.cond.cleanup3, %for.cond.cleanup20
+  %t11.053 = phi i32 [ %inc32, %for.cond.cleanup20 ], [ 0, %for.cond.cleanup3 ]
+  %arrayidx22 = getelementptr inbounds nuw [64 x i32], ptr @in, i32 %t11.053
+  br label %for.body21
+
+for.cond.cleanup14:                               ; preds = %for.cond.cleanup20
+  ret void
+
+for.cond.cleanup20:                               ; preds = %for.body21
+  %arrayidx30 = getelementptr inbounds nuw i32, ptr @ok, i32 %t11.053
+  store i32 %add26, ptr %arrayidx30, align 4
+  %inc32 = add nuw nsw i32 %t11.053, 1
+  %exitcond56.not = icmp eq i32 %inc32, 8
+  br i1 %exitcond56.not, label %for.cond.cleanup14, label %for.cond18.preheader, !llvm.loop !2
+
+for.body21:                                       ; preds = %for.cond18.preheader, %for.body21
+  %k17.052 = phi i32 [ 0, %for.cond18.preheader ], [ %inc28, %for.body21 ]
+  %a16.051 = phi i32 [ 0, %for.cond18.preheader ], [ %add26, %for.body21 ]
+  %arrayidx23 = getelementptr inbounds nuw i32, ptr %arrayidx22, i32 %k17.052
+  %2 = load i32, ptr %arrayidx23, align 4
+  %arrayidx24 = getelementptr inbounds nuw i32, ptr @wk, i32 %k17.052
+  %3 = load i32, ptr %arrayidx24, align 4
+  %mul25 = mul nsw i32 %3, %2
+  %add26 = add nsw i32 %mul25, %a16.051
+  %inc28 = add nuw nsw i32 %k17.052, 1
+  %exitcond55.not = icmp eq i32 %inc28, 64
+  br i1 %exitcond55.not, label %for.cond.cleanup20, label %for.body21
+}
+
+!0 = distinct !{!0, !1}
+!1 = !{!"riscv.xrepeat.jammed", i32 1}
+!2 = distinct !{!2, !1}

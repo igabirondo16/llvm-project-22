@@ -1868,7 +1868,7 @@ copies into the inner loop: one block of `x` feeds 8 `vfmac_acc_8`. That reuses 
 FMA latency, about 5 cycles per MAC. The only f32 kernel faster than that is clang's gepdot (3.25),
 whose lanes are different outputs.
 
-`RISCVXRepeatUnrollAndJamPass` (vectorizer-start hook, after loop fusion, VRF core only) matches
+`RISCVXRepeatUnrollAndJamPass` (vectorizer-start hook, VRF core only; before loop fusion since Phase 24) matches
 ```
 for (o) { acc = init; for (i) acc += x[i] * w[o][i]; out[o] = f(acc); }
 ```
@@ -1963,6 +1963,35 @@ Known cost: in the 16-channel layers, 16 jammed outputs cover all of `c`. The bi
 loads then become invariant in the pixel loops, LICM hoists them, and they are spilled across the
 convolution: 72 FP spill/reload instructions in the binary, against 8 before. conv1 (`ci = 3`, its
 `i` loops fully unrolled) isn't touched: `c` is innermost there.
+
+## Phase 24 — unroll-and-jam before loop fusion
+
+Loop fusion (Phase 18) used to run first. It merged bert_tiny's Q, K and V projections, three dense
+nests reading the same `hidden`, into one nest whose inner loop has three reductions, which the
+unroll-and-jam rejects. So those three of the six dense layers kept serial bursts. Removing fusion
+isn't an option. With `-riscv-xrepeat-loop-fusion=false`, i32 dotxvf is 50% worse, i32 bert_tiny
+6–8% worse and f32 mlp 10–13% worse: their output loops are fully unrolled before either pass
+runs, and fusion is what rebuilds the shared-load loop for them.
+
+Instead, the unroll-and-jam now runs first, with its own loop-simplify step. It tags every output
+loop it jams with the loop attribute `riscv.xrepeat.jammed`. Loop fusion puts a barrier around any
+loop that is, contains or is inside a tagged loop. A jammed nest's inner loops already feed every
+load to 8 or 16 outputs, and fusing two of them would put 32 or 48 accumulators in one loop.
+Everything else fuses as before.
+
+Emulator (all checksums PASS; 59 differential kernels same; i32 table identical):
+
+| f32 | before (Phase 23) insns / steps | now insns / steps |
+|---|---|---|
+| bert_tiny column | 13,800,043 / 37,672,971 | 13,690,558 / **36,667,486** (−2.7% steps) |
+| bert_tiny row | 13,103,890 / 39,001,666 | 12,597,279 / 38,265,679 |
+| resnet8 column | 12,311,796 / 33,386,759 | 12,072,180 / 33,387,271 (−2% insns) |
+| resnet8 row | 11,767,353 / 35,257,904 | 11,519,050 / 35,267,649 |
+| mlp, axpy, dotxvf, gepdot | — | unchanged |
+
+bert's Q/K/V projections now get the column form too (6 of 6 dense nests jammed, against 3
+before). The emulator shows little, because it doesn't charge for the serial FMA chains these
+loops no longer have.
 
 ## Compiling your own code for XRepeat
 
@@ -2068,7 +2097,7 @@ in that window.
 | Option | Effect |
 |---|---|
 | `-fno-vectorize -fno-slp-vectorize` | No vectorization: scalar code, even with XRepeat. |
-| `-mllvm -riscv-xrepeat-loop-fusion=false` | No fusion of loops that share a load before the vectorizers (Phase 18). |
+| `-mllvm -riscv-xrepeat-loop-fusion=false` | No fusion of loops that share a load before the vectorizers (Phase 18). Nests unroll-and-jammed by Phase 22/23 are never fused (Phase 24). |
 | `-mllvm -riscv-xrepeat-fminmax=false` | Float clamps/ReLUs written as compare + select stay selects instead of becoming `fmin.s`/`fmax.s` (Phase 19). |
 | `-mllvm -riscv-xrepeat-keep-small-reductions=false` | Small float reduction loops are fully unrolled again (scalar), as before Phase 21; the rest of keep-small-loops stays. |
 | `-mllvm -riscv-xrepeat-unroll-jam=off\|row\|column` | Unroll-and-jam of the outputs of a float matrix-vector product or convolution (Phases 22, 23): `column` (default) vectorizes across 16 or 8 outputs with independent lanes, `row` jams 4 and leaves them to the loop vectorizer (serial bursts, the hand-written layout), `off` disables it. `-riscv-xrepeat-unroll-jam-count=N` overrides the count. |
