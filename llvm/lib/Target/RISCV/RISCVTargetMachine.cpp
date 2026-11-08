@@ -47,7 +47,16 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/DependenceAnalysis.h"
+#include "llvm/Analysis/IVDescriptors.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Utils/LCSSA.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Utils/UnrollLoop.h"
 #include "llvm/Transforms/Scalar/IndVarSimplify.h"
 #include "llvm/Transforms/Scalar/LoopFuse.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
@@ -907,6 +916,187 @@ public:
 };
 } // namespace
 
+namespace {
+enum class XRepeatUJMode { Off, Row, Column };
+} // namespace
+
+static cl::opt<XRepeatUJMode> XRepeatUnrollJam(
+    "riscv-xrepeat-unroll-jam",
+    cl::desc("XRepeat (VRF core): unroll-and-jam the outputs of a float "
+             "reduction nest (matrix-vector product)"),
+    cl::init(XRepeatUJMode::Column),
+    cl::values(
+        clEnumValN(XRepeatUJMode::Off, "off", "don't"),
+        clEnumValN(XRepeatUJMode::Row, "row",
+                   "the loop vectorizer vectorizes the jammed inner loop: one "
+                   "in-order reduction burst per output (the hand-written "
+                   "kernels' layout)"),
+        clEnumValN(XRepeatUJMode::Column, "column",
+                   "SLP vectorizes across the jammed outputs: each lane is "
+                   "one output, the weights are loaded by column")),
+    cl::Hidden);
+
+static cl::opt<unsigned> XRepeatUnrollJamCount(
+    "riscv-xrepeat-unroll-jam-count",
+    cl::desc("XRepeat (VRF core): outputs jammed by -riscv-xrepeat-unroll-jam "
+             "(0: 16, or 8 if the output count isn't a multiple of 16, in "
+             "column mode; 4 in row mode)"),
+    cl::init(0), cl::Hidden);
+
+namespace {
+// XRepeat (VRF core): unroll-and-jam the output loop of a matrix-vector
+// product,
+//   for (o) { acc = b[o]; for (i) acc += x[i] * w[o][i]; out[o] = f(acc); }
+// by N: the inner loop then carries N accumulators, w[o+0..N-1][i] and one
+// x[i].
+//
+// An in-order float reduction can only become a serial burst (fmadd.s + REPEAT
+// mask 0110, each element waiting for the previous one's FMA), and that is
+// what the loop vectorizer makes of the inner loop on its own. Jammed, the
+// inner loop is instead marked as already vectorized so that SLP vectorizes
+// across the accumulators ("column"): per i, one 8-lane fmadd.s burst for
+// each 8 outputs, its lanes independent (mask 1101), w[o..o+7][i] one strided
+// block load, x[i] a scalar; each lane still adds its products in source
+// order, so the result is the scalar code's bit for bit. N = 16 (two bursts
+// per x[i], 16 accumulators in two blocks plus one block for the weights).
+//
+// "row" leaves the jammed loop to the loop vectorizer: one serial burst per
+// output sharing each block of x, like the hand-written kernels. N = 4: the
+// vectorizer counts x and every row as live blocks (see getNumberOfRegisters)
+// and rejects more than five.
+//
+// Only nests where this is the whole story are touched: an inner loop with
+// one float fadd/fmuladd reduction, no stores, and loads that are either
+// invariant in the output loop (x) or step by a constant with it (w's rows),
+// an output loop with a constant trip count that is a multiple of the count
+// and nothing but the inner loop inside it.
+class RISCVXRepeatUnrollAndJamPass
+    : public PassInfoMixin<RISCVXRepeatUnrollAndJamPass> {
+  const RISCVTargetMachine &TM;
+
+  // The number of outputs to jam for L, or 0 if L isn't a candidate.
+  static unsigned getCount(Loop *L, ScalarEvolution &SE) {
+    if (L->getSubLoops().size() != 1 || !L->isLoopSimplifyForm())
+      return 0;
+    Loop *Sub = L->getSubLoops()[0];
+    if (!Sub->isInnermost() || !Sub->isLoopSimplifyForm())
+      return 0;
+    unsigned TC = SE.getSmallConstantTripCount(L);
+    SmallVector<unsigned, 2> Counts;
+    if (XRepeatUnrollJamCount)
+      Counts.push_back(XRepeatUnrollJamCount);
+    else if (XRepeatUnrollJam == XRepeatUJMode::Row)
+      Counts.push_back(4);
+    else
+      Counts.append({16, 8});
+    unsigned Count = 0;
+    for (unsigned C : Counts)
+      if (C >= 2 && TC >= C && TC % C == 0) {
+        Count = C;
+        break;
+      }
+    if (!Count)
+      return 0;
+
+    unsigned NumRed = 0;
+    for (PHINode &Phi : Sub->getHeader()->phis()) {
+      RecurrenceDescriptor RD;
+      if (RecurrenceDescriptor::isReductionPHI(&Phi, Sub, RD, nullptr, nullptr,
+                                               nullptr, &SE)) {
+        RecurKind K = RD.getRecurrenceKind();
+        if (!Phi.getType()->isFloatTy() ||
+            (K != RecurKind::FAdd && K != RecurKind::FMulAdd))
+          return 0;
+        ++NumRed;
+      } else if (!SE.isSCEVable(Phi.getType()) ||
+                 !isa<SCEVAddRecExpr>(SE.getSCEV(&Phi))) {
+        return 0;
+      }
+    }
+    if (NumRed != 1)
+      return 0;
+
+    for (BasicBlock *BB : Sub->blocks())
+      for (Instruction &I : *BB) {
+        if (I.mayWriteToMemory() || (isa<CallBase>(I) && !isa<IntrinsicInst>(I)))
+          return 0;
+        auto *LI = dyn_cast<LoadInst>(&I);
+        if (!LI)
+          continue;
+        const SCEV *Ptr = SE.getSCEV(LI->getPointerOperand());
+        auto *AR = dyn_cast<SCEVAddRecExpr>(Ptr);
+        if (!AR || AR->getLoop() != Sub || !AR->isAffine())
+          return 0;
+        const SCEV *Start = AR->getStart();
+        if (SE.isLoopInvariant(Start, L))
+          continue;
+        auto *ARL = dyn_cast<SCEVAddRecExpr>(Start);
+        if (!ARL || ARL->getLoop() != L || !ARL->isAffine() ||
+            !isa<SCEVConstant>(ARL->getStepRecurrence(SE)))
+          return 0;
+      }
+    return Count;
+  }
+
+public:
+  RISCVXRepeatUnrollAndJamPass(const RISCVTargetMachine &TM) : TM(TM) {}
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM) {
+    if (XRepeatUnrollJam == XRepeatUJMode::Off ||
+        !TM.getSubtarget<RISCVSubtarget>(F).hasXRepeatVRFVectors())
+      return PreservedAnalyses::all();
+
+    auto &LI = FAM.getResult<LoopAnalysis>(F);
+    auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(F);
+    SmallVector<std::pair<Loop *, unsigned>, 4> Candidates;
+    for (Loop *L : LI.getLoopsInPreorder())
+      if (unsigned Count = getCount(L, SE))
+        Candidates.push_back({L, Count});
+    if (Candidates.empty())
+      return PreservedAnalyses::all();
+
+    auto &DT = FAM.getResult<DominatorTreeAnalysis>(F);
+    auto &AC = FAM.getResult<AssumptionAnalysis>(F);
+    auto &DI = FAM.getResult<DependenceAnalysis>(F);
+    auto &TTI = FAM.getResult<TargetIRAnalysis>(F);
+    auto &ORE = FAM.getResult<OptimizationRemarkEmitterAnalysis>(F);
+    bool Changed = false;
+    for (auto [L, Count] : Candidates) {
+      Loop *Outermost = L;
+      while (Loop *P = Outermost->getParentLoop())
+        Outermost = P;
+      Changed |= formLCSSARecursively(*Outermost, DT, &LI, &SE);
+      if (!isSafeToUnrollAndJam(L, SE, DT, DI, LI))
+        continue;
+      Loop *Sub = L->getSubLoops()[0];
+      unsigned TC = SE.getSmallConstantTripCount(L);
+      if (UnrollAndJamLoop(L, Count, TC, TC, /*UnrollRemainder=*/false, &LI,
+                           &SE, &DT, &AC, &TTI, &ORE) ==
+          LoopUnrollResult::Unmodified)
+        continue;
+      Changed = true;
+      // The jammed inner loop is Sub (the copies are merged into it). Keep
+      // the outer loop as it is now, and in column mode keep the loop
+      // vectorizer off the inner loop: SLP vectorizes across the jammed
+      // accumulators instead.
+      addStringMetadataToLoop(L, "llvm.loop.unroll.disable");
+      if (XRepeatUnrollJam == XRepeatUJMode::Column)
+        addStringMetadataToLoop(Sub, "llvm.loop.isvectorized", 1);
+    }
+    if (!Changed)
+      return PreservedAnalyses::all();
+
+    // One induction variable for the jammed copies and one load of x[i].
+    FAM.invalidate(F, PreservedAnalyses::none());
+    FunctionPassManager FPM;
+    FPM.addPass(createFunctionToLoopPassAdaptor(IndVarSimplifyPass(),
+                                                /*UseMemorySSA=*/true));
+    FPM.addPass(EarlyCSEPass(/*UseMemorySSA=*/true));
+    FPM.run(F, FAM);
+    return PreservedAnalyses::none();
+  }
+};
+} // namespace
+
 void RISCVTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
 #define GET_PASS_REGISTRY "RISCVPassRegistry.def"
 #include "llvm/Passes/TargetPassRegistry.inc"
@@ -922,6 +1112,7 @@ void RISCVTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
         if (Level.getSpeedupLevel() >= 2) {
           FPM.addPass(RISCVXRepeatFMinMaxPass(*this));
           FPM.addPass(RISCVXRepeatLoopFusionPass(*this));
+          FPM.addPass(RISCVXRepeatUnrollAndJamPass(*this));
         }
       });
 }

@@ -1860,6 +1860,67 @@ worked example.
 After editing any `.td` or `.cpp` file, rebuild `clang` too, not only `llc`. `clang` contains
 its own copy of the back end, and a stale `clang` once produced a false test failure.
 
+## Phase 22 — unroll-and-jam of the outputs (column form)
+
+The hand-written kernels unroll the output loop of every matrix-vector product by 8 and jam the
+copies into the inner loop: one block of `x` feeds 8 `vfmac_acc_8`. That reuses `x`, but each
+`vfmac_acc_8` is still a serial burst (`fmadd.s` + REPEAT mask 0110), so the RTL runs them at the
+FMA latency, about 5 cycles per MAC. The only f32 kernel faster than that is clang's gepdot (3.25),
+whose lanes are different outputs.
+
+`RISCVXRepeatUnrollAndJamPass` (vectorizer-start hook, after loop fusion, VRF core only) matches
+```
+for (o) { acc = init; for (i) acc += x[i] * w[o][i]; out[o] = f(acc); }
+```
+- **Inner loop:** exactly one float `fadd`/`fmuladd` reduction, no stores or calls. Its loads are
+  either invariant in `o` (`x`) or step by a constant with `o` (`w`'s rows).
+- **Outer loop:** nothing but the inner loop inside it, and a constant trip count that is a
+  multiple of the count.
+
+It calls LLVM's `UnrollAndJamLoop` after `isSafeToUnrollAndJam`, then IndVarSimplify + EarlyCSE
+(one induction variable and one load of `x[i]` for all copies). Two forms, chosen with
+`-riscv-xrepeat-unroll-jam`:
+
+- **column** (default): the jammed inner loop gets `llvm.loop.isvectorized`, so the loop
+  vectorizer leaves it to SLP. SLP vectorizes across the accumulators:
+  ```
+  flw      f15, 0(x29)             # x[i]
+  flw      f0, 0(x30)              # w[o..o+7][i]: strided block load (stride = row length)
+  xr.repeat 0x1, x19, 7
+  fmadd.s  f16, f15, f0, f16       # acc[o..o+7] += x[i] * w[..][i]
+  xr.repeat 0xd, x0, 7             # mask 1101: 8 independent lanes
+  (and the same for o+8..o+15 into f24..f31)
+  ```
+  Each lane adds its products in source order, so the result is the scalar code's, bit for bit.
+  The count is 16 (two bursts per `x[i]`, accumulators in two blocks plus a weight block), or 8 if
+  the output count isn't a multiple of 16.
+- **row**: the jammed loop goes to the loop vectorizer. That gives one serial burst per output
+  sharing each block of `x`, the hand-written layout. The count is 4, because the vectorizer
+  counts `x` and every row as live blocks and rejects more than five (with 8 it keeps the loop
+  scalar and SLP produces the column form anyway).
+
+`-riscv-xrepeat-unroll-jam-count=N` overrides the count.
+
+LLVM's own `LoopUnrollAndJamPass` can't be used as is, for two reasons: in the pipeline it runs
+after both vectorizers, and its heuristics are off by default. The pass reuses only its
+transformation and legality check.
+
+Emulator, f32, window counters (all checksums PASS; 59 differential kernels same; i32 table
+identical; no new spills):
+
+| benchmark | off (Phase 21) insns / steps | column insns / steps | row insns / steps |
+|---|---|---|---|
+| bert_tiny | 17,412,609 / 49,514,289 | 13,800,043 / 37,672,971 (−21% / −24%) | 13,103,890 / 39,001,666 |
+| mlp | 3,030 / 9,330 | 1,973 / 6,565 (−35% / −30%) | 1,902 / 6,858 |
+| resnet8 | 18,755,562 / 50,073,569 | 18,597,687 / 49,822,510 (−1%) | 18,622,639 / 49,854,630 |
+| axpy, dotxvf, gepdot | — | unchanged | unchanged |
+
+The emulator charges a burst element the same whether its lanes depend on each other or not, so
+it can't show column's main advantage (no FMA-latency chain). Row and column must be compared on
+the RTL. resnet8 barely moves: its convolutions are `c → ky → kx → i` nests (three levels inside
+the output loop) and the pass only handles one. The dense epilogue stays scalar: `v > 127 ? 127 : v`
+isn't exactly `fmin` (NaN), so the clamps keep their compares and branches.
+
 ## Compiling your own code for XRepeat
 
 Write plain C; there are no intrinsics or pragmas. The vectorizers decide what goes into
@@ -1967,6 +2028,7 @@ in that window.
 | `-mllvm -riscv-xrepeat-loop-fusion=false` | No fusion of loops that share a load before the vectorizers (Phase 18). |
 | `-mllvm -riscv-xrepeat-fminmax=false` | Float clamps/ReLUs written as compare + select stay selects instead of becoming `fmin.s`/`fmax.s` (Phase 19). |
 | `-mllvm -riscv-xrepeat-keep-small-reductions=false` | Small float reduction loops are fully unrolled again (scalar), as before Phase 21; the rest of keep-small-loops stays. |
+| `-mllvm -riscv-xrepeat-unroll-jam=off\|row\|column` | Unroll-and-jam of the outputs of a float matrix-vector product (Phase 22): `column` (default) vectorizes across 16 or 8 outputs with independent lanes, `row` jams 4 and leaves them to the loop vectorizer (serial bursts, the hand-written layout), `off` disables it. `-riscv-xrepeat-unroll-jam-count=N` overrides the count. |
 | `-mllvm -riscv-xrepeat-keep-small-loops=false` | Small constant-trip-count loops are fully unrolled as usual, instead of kept rolled for the vectorizer (Phase 7). |
 | `-mllvm -force-vector-width=8` (or 16) | Force a vectorization factor, ignoring the cost model. Only for experiments; it can spill. |
 
