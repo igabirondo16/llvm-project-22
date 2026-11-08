@@ -229,7 +229,7 @@ bool RISCVCodeGenPrepare::visitIntrinsicInst(IntrinsicInst &I) {
 
   // XRepeat (VRF core) accumulates a reduction into a single F register, so a
   // scalar phi is what it wants; the vector phi below is for RVV.
-  if (!ST->hasVInstructions())
+  if (ST->hasXRepeatVRFVectors())
     return false;
 
   auto *PHI = dyn_cast<PHINode>(I.getOperand(0));
