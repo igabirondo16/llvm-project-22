@@ -24,7 +24,7 @@
 //     stride (bytes) of a repeated load/store; count (0..15) is a literal in
 //     the rs2 field.
 //   Repeatable: lw/flw/xr.lw, sw/fsw/xr.sw, xr.mac, xr.<alu>, xr.<alu>i,
-//   fmadd.s, fadd.s, fsub.s, fmul.s.
+//   fmadd.s, fadd.s, fsub.s, fmul.s, fmin.s, fmax.s.
 //
 // XRepeatInt is the original core, frozen (see RISCVFeatures.td):
 //   - xr.mac (custom-0): GPR rd = rs1 * rs2 + rs3.
@@ -592,6 +592,12 @@ defvar XRFIntRR = [XRFRROp<XRV_ADD, add>, XRFRROp<XRV_SUB, sub>,
                    XRFRROp<XRV_SRL, srl>, XRFRROp<XRV_SRA, sra>];
 defvar XRFFloatRR = [XRFRROp<FADD_S, fadd>, XRFRROp<FSUB_S, fsub>,
                      XRFRROp<FMUL_S, fmul>];
+// fmin.s/fmax.s have no rounding mode. They implement both LLVM's
+// minnum/maxnum and minimumnum/maximumnum (IEEE 754-2019 minimumNumber/
+// maximumNumber, -0.0 < +0.0), as for scalars (RISCVInstrInfoF.td).
+defvar XRFFloatMinMax = [XRFRROp<FMIN_S, fminnum>, XRFRROp<FMAX_S, fmaxnum>,
+                         XRFRROp<FMIN_S, fminimumnum>,
+                         XRFRROp<FMAX_S, fmaximumnum>];
 
 // A zero in an f register: the addend of a multiply.
 defvar XRFZero = (XRV_MV_VX (XLenVT X0));
@@ -636,6 +642,12 @@ foreach A = [0, 1] in {
         : XRFRepeatPseudo<O.Base, W, 0, 0, (outs V.RC:$rd),
                           (ins XRFSrc<V, A>.RC:$rs1, XRFSrc<V, B>.RC:$rs2,
                                frmarg:$frm), C2>;
+    let mayRaiseFPException = true in
+    foreach Base = [FMIN_S, FMAX_S] in
+    def P # Base # _ # W # _ # K2
+        : XRFRepeatPseudo<Base, W, 0, 0, (outs V.RC:$rd),
+                          (ins XRFSrc<V, A>.RC:$rs1, XRFSrc<V, B>.RC:$rs2),
+                          C2>;
 
     foreach C = [0, 1] in
     if XRFFits<W, [A, B, C]>.Val then {
@@ -803,12 +815,18 @@ foreach C = [0, 1] in {
             (!cast<Instruction>(P # FMADD_S_ # W # _ # XRFKinds<[A, B, C]>.Name)
                  OFA, OFB, OFC, FRM_DYN)>;
 
-  if !eq(C, 0) then
-  foreach O = XRFFloatRR in
-  def : Pat<(FVT (O.Op FA, FB)),
-            (!cast<Instruction>(P # O.Base # _ # W # _ #
-                                XRFKinds<[A, B]>.Name)
-                 OFA, OFB, FRM_DYN)>;
+  if !eq(C, 0) then {
+    foreach O = XRFFloatRR in
+    def : Pat<(FVT (O.Op FA, FB)),
+              (!cast<Instruction>(P # O.Base # _ # W # _ #
+                                  XRFKinds<[A, B]>.Name)
+                   OFA, OFB, FRM_DYN)>;
+    foreach O = XRFFloatMinMax in
+    def : Pat<(FVT (O.Op FA, FB)),
+              (!cast<Instruction>(P # O.Base # _ # W # _ #
+                                  XRFKinds<[A, B]>.Name)
+                   OFA, OFB)>;
+  }
 }
 
 // Reductions, accumulating into a single f register: integer sums start at

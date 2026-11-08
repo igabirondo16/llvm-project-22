@@ -899,6 +899,10 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
         case ISD::FSUB:
         case ISD::FMUL:
         case ISD::FMA:
+        case ISD::FMINNUM:
+        case ISD::FMAXNUM:
+        case ISD::FMINIMUMNUM:
+        case ISD::FMAXIMUMNUM:
         case ISD::VECREDUCE_FADD:
         case ISD::VECREDUCE_SEQ_FADD:
           setOperationAction(Op, XRVT, IsFP ? Legal : Expand);

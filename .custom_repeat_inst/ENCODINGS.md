@@ -97,6 +97,9 @@ pipeline's issue module (`lsu_issue_module.sv`, `compute_issue_module.sv`, `ctrl
   address always advances by `stride` each iteration either way.
 - **Compute pipe**: `mac`/`vr.mac` and `vr.alu` (and the FP equivalents sharing the same dispatch
   shape) — `rd`/`rs1`/`rs2`/`rs3` walking is independently `mask`-controlled per the table above.
+  The FP instructions used with a trailer so far are `fadd.s`, `fsub.s`, `fmul.s`, `fmadd.s`,
+  `fmin.s` and `fmax.s` (the last two in the hand-written f32 kernels, mask `1011`, which pass on
+  the RTL). `fsgnj*.s` with a trailer has not been exercised.
 - **Ctrl pipe**: `vr.alu`-family/ALU-redirected ops issued on that pipe — same `mask`-controlled
   walking for `rd`/`rs1`/`rs2`.
 

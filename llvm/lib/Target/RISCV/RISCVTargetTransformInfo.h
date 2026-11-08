@@ -25,6 +25,13 @@
 
 namespace llvm {
 
+namespace RISCV {
+/// XRepeat (VRF core): if \p SI is a min/max of a value \p V and a constant
+/// \p C (exactly, or as the compare's fast-math flags allow), the
+/// minimumnum/maximumnum intrinsic that can replace it, else not_intrinsic.
+Intrinsic::ID getXRepeatFMinMax(const SelectInst &SI, Value *&V, Constant *&C);
+} // namespace RISCV
+
 class RISCVTTIImpl final : public BasicTTIImplBase<RISCVTTIImpl> {
   using BaseT = BasicTTIImplBase<RISCVTTIImpl>;
   using TTI = TargetTransformInfo;

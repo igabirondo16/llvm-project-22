@@ -1533,6 +1533,14 @@ RISCVTTIImpl::getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
           return *Cost * 2;
       }
       break;
+    case Intrinsic::minnum:
+    case Intrinsic::maxnum:
+    case Intrinsic::minimumnum:
+    case Intrinsic::maximumnum:
+      // fmin.s/fmax.s + REPEAT.
+      if (std::optional<InstructionCost> Cost = getXRFPairCost(RetTy))
+        return *Cost;
+      break;
     case Intrinsic::vector_reduce_add:
     case Intrinsic::vector_reduce_fadd:
     // Strided loads and stores: getMemIntrinsicInstrCost, through BaseT.
@@ -3065,6 +3073,97 @@ InstructionCost RISCVTTIImpl::getPointersChainCost(
   return Cost;
 }
 
+// XRepeat (VRF core): whether a float select is a min/max of a value and a
+// constant C, which llvm.minimumnum/maximumnum (IEEE 754-2019
+// minimumNumber/maximumNumber: a NaN operand gives the other one, and
+// -0.0 < +0.0, which is what fmin.s/fmax.s do) can replace.
+//
+// Exactly (no fast-math flags), with C not a NaN:
+//   x >  C ? x : C   C != -0.0   (x = +0.0, C = -0.0 gives -0.0, max +0.0)
+//   x >= C ? x : C   C != +0.0   (x = -0.0, C = +0.0 gives -0.0, max +0.0)
+//   x <  C ? x : C   C != +0.0
+//   x <= C ? x : C   C != -0.0
+// with an ordered compare, so that a NaN x selects C, as minimumNumber does;
+// a select of C on the true side is one of these with the inverse (unordered)
+// predicate. x < C ? C : x is not one: a NaN x selects x.
+//
+// The compare's fast-math flags relax this (clang puts them on the fcmp, not
+// on the select, so InstCombine's own select -> minnum/maxnum often doesn't
+// fire): with nnan any predicate and either side will do, with nsz the
+// conditions on C's sign go, and with both, the clamp InstCombine makes of
+// two selects, x > C ? min(x, C2) : C with C2 >= C, is max(min(x, C2), C).
+Intrinsic::ID llvm::RISCV::getXRepeatFMinMax(const SelectInst &CSI, Value *&V,
+                                           Constant *&C) {
+  auto &SI = const_cast<SelectInst &>(CSI);
+  auto *Cmp = dyn_cast<FCmpInst>(SI.getCondition());
+  if (!Cmp || !SI.getType()->isFloatTy())
+    return Intrinsic::not_intrinsic;
+  FCmpInst::Predicate Pred = Cmp->getPredicate();
+  Value *X = Cmp->getOperand(0), *R = Cmp->getOperand(1);
+  if (isa<ConstantFP>(X)) {
+    std::swap(X, R);
+    Pred = FCmpInst::getSwappedPredicate(Pred);
+  }
+  auto *CFP = dyn_cast<ConstantFP>(R);
+  if (!CFP || CFP->isNaN())
+    return Intrinsic::not_intrinsic;
+  bool NNaN = Cmp->hasNoNaNs(), NSZ = Cmp->hasNoSignedZeros();
+
+  // As "Pred ? V : C".
+  if (SI.getFalseValue() == CFP) {
+    V = SI.getTrueValue();
+  } else if (SI.getTrueValue() == CFP) {
+    V = SI.getFalseValue();
+    Pred = FCmpInst::getInversePredicate(Pred);
+  } else {
+    return Intrinsic::not_intrinsic;
+  }
+  bool IsMax, OrEqual;
+  switch (Pred) {
+  case FCmpInst::FCMP_OGT: case FCmpInst::FCMP_UGT:
+    IsMax = true, OrEqual = false; break;
+  case FCmpInst::FCMP_OGE: case FCmpInst::FCMP_UGE:
+    IsMax = true, OrEqual = true; break;
+  case FCmpInst::FCMP_OLT: case FCmpInst::FCMP_ULT:
+    IsMax = false, OrEqual = false; break;
+  case FCmpInst::FCMP_OLE: case FCmpInst::FCMP_ULE:
+    IsMax = false, OrEqual = true; break;
+  default:
+    return Intrinsic::not_intrinsic;
+  }
+  // A NaN x makes an unordered compare true, selecting V.
+  if (FCmpInst::isUnordered(Pred) && !NNaN)
+    return Intrinsic::not_intrinsic;
+  // x = -C when C is a zero: > and <= keep the -0.0 one, >= and < the +0.0
+  // one; max needs +0.0, min -0.0.
+  if (!NSZ && CFP->isZero() &&
+      CFP->isNegative() == (IsMax ? !OrEqual : OrEqual))
+    return Intrinsic::not_intrinsic;
+  if (V == X) {
+    C = CFP;
+    return IsMax ? Intrinsic::maximumnum : Intrinsic::minimumnum;
+  }
+  // The other bound of a clamp, inside the select.
+  auto *II = dyn_cast<IntrinsicInst>(V);
+  if (!NNaN || !NSZ || !II || II->getArgOperand(0) != X)
+    return Intrinsic::not_intrinsic;
+  auto *C2 = dyn_cast<ConstantFP>(II->getArgOperand(1));
+  switch (II->getIntrinsicID()) {
+  case Intrinsic::minnum: case Intrinsic::minimumnum:
+    if (!IsMax || !C2 || C2->getValueAPF() < CFP->getValueAPF())
+      return Intrinsic::not_intrinsic;
+    break;
+  case Intrinsic::maxnum: case Intrinsic::maximumnum:
+    if (IsMax || !C2 || C2->getValueAPF() > CFP->getValueAPF())
+      return Intrinsic::not_intrinsic;
+    break;
+  default:
+    return Intrinsic::not_intrinsic;
+  }
+  C = CFP;
+  return IsMax ? Intrinsic::maximumnum : Intrinsic::minimumnum;
+}
+
 // XRepeat: whether \p L is a small innermost loop that the loop vectorizer can
 // turn into whole XRepeat blocks: a constant trip count that is a multiple of
 // the narrowest block (4 for the GPR blocks, 8 for the VRF ones), and a body
@@ -3101,6 +3200,31 @@ static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE,
       if (isa<PHINode, GetElementPtrInst, BranchInst, ICmpInst>(I) ||
           I.isDebugOrPseudoInst())
         continue;
+      // VRF: a float clamp/ReLU that RISCVXRepeatFMinMaxPass turns into
+      // fmin.s/fmax.s (the compare only feeding such selects), or min/max
+      // intrinsics.
+      if (VRF) {
+        Value *V;
+        Constant *C;
+        auto IsMinMaxSelect = [&](const User *U) {
+          const auto *SI = dyn_cast<SelectInst>(U);
+          return SI && RISCV::getXRepeatFMinMax(*SI, V, C) !=
+                           Intrinsic::not_intrinsic;
+        };
+        if (isa<FCmpInst>(I) && all_of(I.users(), IsMinMaxSelect))
+          continue;
+        const auto *II = dyn_cast<IntrinsicInst>(&I);
+        if (IsMinMaxSelect(&I) ||
+            (II && I.getType()->isFloatTy() &&
+             (II->getIntrinsicID() == Intrinsic::minnum ||
+              II->getIntrinsicID() == Intrinsic::maxnum ||
+              II->getIntrinsicID() == Intrinsic::minimumnum ||
+              II->getIntrinsicID() == Intrinsic::maximumnum))) {
+          HasArith |= any_of(I.operand_values(),
+                             [](const Value *Op) { return isa<LoadInst>(Op); });
+          continue;
+        }
+      }
       if (const auto *LI = dyn_cast<LoadInst>(&I)) {
         if (!LI->isSimple() || !IsEltTy(LI->getType()))
           return false;

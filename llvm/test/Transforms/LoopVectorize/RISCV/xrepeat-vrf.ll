@@ -263,3 +263,27 @@ loop:
 exit:
   ret void
 }
+
+; A clamp (what RISCVXRepeatFMinMaxPass makes of exact compare + select
+; clamps): fmin.s/fmax.s + REPEAT, so it is vectorized.
+; CHECK-LABEL: @clamp(
+; CHECK:       vector.body:
+; CHECK:         [[LO:%.*]] = call <16 x float> @llvm.maximumnum.v16f32(<16 x float> %{{.*}}, <16 x float> splat (float -1.280000e+02))
+; CHECK:         call <16 x float> @llvm.minimumnum.v16f32(<16 x float> [[LO]], <16 x float> splat (float 1.270000e+02))
+define void @clamp(ptr noalias %a, ptr noalias %b, i32 %n) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %pa = getelementptr inbounds float, ptr %a, i32 %i
+  %va = load float, ptr %pa
+  %lo = call float @llvm.maximumnum.f32(float %va, float -128.0)
+  %hi = call float @llvm.minimumnum.f32(float %lo, float 127.0)
+  %pb = getelementptr inbounds float, ptr %b, i32 %i
+  store float %hi, ptr %pb
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, %n
+  br i1 %done, label %exit, label %loop
+exit:
+  ret void
+}

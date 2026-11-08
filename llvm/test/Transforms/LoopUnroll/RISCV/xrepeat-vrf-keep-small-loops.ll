@@ -95,3 +95,47 @@ loop:
 exit:
   ret void
 }
+
+; A ReLU that is exactly maximumNumber (RISCVXRepeatFMinMaxPass makes it
+; fmax.s + REPEAT later): kept.
+; CHECK-LABEL: define void @relu_tc8(
+; KEEP:          br i1 %{{.*}}, label %exit, label %loop
+; UNROLL-NOT:    br i1
+define void @relu_tc8(ptr noalias %d, ptr noalias %a) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %pa = getelementptr inbounds float, ptr %a, i32 %i
+  %va = load float, ptr %pa
+  %c = fcmp ogt float %va, 0.0
+  %r = select i1 %c, float %va, float 0.0
+  %pd = getelementptr inbounds float, ptr %d, i32 %i
+  store float %r, ptr %pd
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, 8
+  br i1 %done, label %exit, label %loop
+exit:
+  ret void
+}
+
+; x < 0 ? 0 : x is not (a NaN x selects x): unrolled as before.
+; CHECK-LABEL: define void @relu_nan_tc8(
+; CHECK-NOT:     br i1
+define void @relu_nan_tc8(ptr noalias %d, ptr noalias %a) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %pa = getelementptr inbounds float, ptr %a, i32 %i
+  %va = load float, ptr %pa
+  %c = fcmp olt float %va, 0.0
+  %r = select i1 %c, float 0.0, float %va
+  %pd = getelementptr inbounds float, ptr %d, i32 %i
+  store float %r, ptr %pd
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, 8
+  br i1 %done, label %exit, label %loop
+exit:
+  ret void
+}

@@ -52,9 +52,37 @@ int printf(const char *fmt, ...) {
         case 'u': putu(va_arg(ap, unsigned), 10, width, pad); break;
         case 'x': putu(va_arg(ap, unsigned), 16, width, pad); break;
         case 's': puts_(va_arg(ap, const char *)); break;
+        case 'f':
+        case 'g': {
+            // No soft-float formatting here: print the double's bits.
+            union { double d; unsigned w[2]; } u = {va_arg(ap, double)};
+            puts_("0x");
+            putu(u.w[1], 16, 8, '0');
+            putu(u.w[0], 16, 8, '0');
+            break;
+        }
         default: CONSOLE = *fmt;
         }
     }
     va_end(ap);
     return 0;
+}
+
+// float -> double, which printf("%g", (double) f) needs and there is no libgcc for (the f32
+// benchmarks). Integer operations only, so it calls nothing else.
+double __extendsfdf2(float a) {
+    union { float f; unsigned u; } x = {a};
+    unsigned e = (x.u >> 23) & 0xff, m = x.u & 0x7fffff;
+    unsigned long long r = (unsigned long long) (x.u >> 31) << 63;
+    if (e == 0xff) {
+        r |= 0x7ffULL << 52 | (unsigned long long) m << 29;
+    } else if (e != 0) {
+        r |= (unsigned long long) (e - 127 + 1023) << 52 | (unsigned long long) m << 29;
+    } else if (m) {  // subnormal: normalize
+        int sh = 0;
+        while (!(m & 0x800000)) m <<= 1, sh++;
+        r |= (unsigned long long) (1023 - 126 - sh) << 52 | (unsigned long long) (m & 0x7fffff) << 29;
+    }
+    union { unsigned long long u; double d; } y = {r};
+    return y.d;
 }

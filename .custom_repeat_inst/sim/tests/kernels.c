@@ -26,6 +26,10 @@ static u32 rnd(void) { return seed = seed * 1103515245u + 12345u; }
 
 static i32 A[NMAX], B[NMAX], C[NMAX], D[NMAX];
 static float FA[NMAX], FB[NMAX], FC[NMAX], FD[NMAX];
+// Inputs for the min/max kernels: NaN, signed zeros, infinities, the clamp bounds and values
+// next to them, between ordinary values.
+static float FS[NMAX];
+static float f_bits(u32 b) { union { u32 u; float f; } v = {b}; return v.f; }
 
 static u32 hash(const void *p, int n) {
     const u32 *w = (const u32 *) p;
@@ -46,6 +50,12 @@ static void init(void) {
         FC[i] = (float) ((i32) rnd() >> 10) * 3.0f;
         FD[i] = 0;
     }
+    static const u32 special[] = {0x7fc00000u, 0x00000000u, 0x80000000u, 0x7f800000u, 0xff800000u,
+                                  0x42fe0000u /* 127 */, 0xc3000000u /* -128 */, 0x42fe0001u,
+                                  0xc3000001u, 0x3f800000u /* 1 */, 0xbf800000u /* -1 */};
+    for (int i = 0; i < NMAX; i++)
+        FS[i] = (i % 3 == 0) ? f_bits(special[(i / 3) % (sizeof special / sizeof special[0])])
+                             : (float) ((i32) rnd() >> 22);
 }
 
 #define REPORT(name, ptr, n) printf("%s %08x\n", name, hash(ptr, n))
@@ -164,6 +174,28 @@ NI float f_dot_nc(const float *a, const float *b, int n) {
     float s = 0; for (int i = 0; i < n; i++) s += a[i] * b[i]; return s;
 }
 
+// ---- float min/max (fmin.s/fmax.s + REPEAT where the select is exactly a min/max)
+NI void f_relu(float *d, const float *a, int n) { for (int i = 0; i < n; i++) d[i] = a[i] > 0.0f ? a[i] : 0.0f; }
+NI void f_clamp(float *d, const float *a, int n) {
+    for (int i = 0; i < n; i++) { float v = a[i] > -128.0f ? a[i] : -128.0f; d[i] = v < 127.0f ? v : 127.0f; }
+}
+NI void f_clamp_ge(float *d, const float *a, int n) {
+    for (int i = 0; i < n; i++) { float v = a[i] >= -128.0f ? a[i] : -128.0f; d[i] = v <= 127.0f ? v : 127.0f; }
+}
+NI void f_clamp_inv(float *d, const float *a, int n) {  // constant on the true side, inverse compare
+    for (int i = 0; i < n; i++) d[i] = !(a[i] > -1.0f) ? -1.0f : a[i];
+}
+// Not exactly a min/max (a NaN, or -0.0 for +0.0): must stay compare + select.
+NI void f_relu_nan(float *d, const float *a, int n) { for (int i = 0; i < n; i++) d[i] = a[i] < 0.0f ? 0.0f : a[i]; }
+NI void f_negzero(float *d, const float *a, int n) { for (int i = 0; i < n; i++) d[i] = a[i] > -0.0f ? a[i] : -0.0f; }
+NI void f_ge_zero(float *d, const float *a, int n) { for (int i = 0; i < n; i++) d[i] = a[i] >= 0.0f ? a[i] : 0.0f; }
+NI void f_maxv(float *d, const float *a, const float *b, int n) {
+    for (int i = 0; i < n; i++) d[i] = __builtin_fmaxf(a[i], b[i]);
+}
+NI void f_min8(float *d, const float *a) {
+    for (int i = 0; i < 8; i++) d[i] = a[i] < 2.5f ? a[i] : 2.5f;
+}
+
 // ---- float, constant sizes
 NI void f_c16(float *y, float s) { for (int i = 0; i < 16; i++) y[i] = y[i] * s + 1.0f; }
 NI void f_c64(float *y, const float *x, float a) { for (int i = 0; i < 64; i++) y[i] = a * x[i] + y[i]; }
@@ -224,5 +256,14 @@ int main(void) {
     f_c64(FD, FB, 2.5f); REPORT("fc64", FD, NMAX);
     fr = f_sum64(FC); REPORT1("fsum64", fr);
     f_slp(FD, FA, FB); REPORT("fslp", FD, NMAX);
+    f_relu(FD, FS, N); REPORT("frelu", FD, NMAX);
+    f_clamp(FD, FS, N); REPORT("fclamp", FD, NMAX);
+    f_clamp_ge(FD, FS, N); REPORT("fclamp_ge", FD, NMAX);
+    f_clamp_inv(FD, FS, N); REPORT("fclamp_inv", FD, NMAX);
+    f_relu_nan(FD, FS, N); REPORT("frelu_nan", FD, NMAX);
+    f_negzero(FD, FS, N); REPORT("fnegzero", FD, NMAX);
+    f_ge_zero(FD, FS, N); REPORT("fge_zero", FD, NMAX);
+    f_maxv(FD, FS, FA, N); REPORT("fmaxv", FD, NMAX);
+    f_min8(FD, FS); REPORT("fmin8", FD, NMAX);
     return 0;
 }

@@ -18,4 +18,5 @@
 #endif
 FUNCTION_PASS("riscv-codegenprepare", RISCVCodeGenPreparePass(this))
 FUNCTION_PASS("riscv-xrepeat-loop-fusion", RISCVXRepeatLoopFusionPass(*this))
+FUNCTION_PASS("riscv-xrepeat-fminmax", RISCVXRepeatFMinMaxPass(*this))
 #undef FUNCTION_PASS

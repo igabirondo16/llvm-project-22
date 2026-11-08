@@ -45,11 +45,14 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/IndVarSimplify.h"
 #include "llvm/Transforms/Scalar/LoopFuse.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
 #include "llvm/Transforms/Utils/LoopSimplify.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Vectorize/LoopIdiomVectorize.h"
 #include <optional>
 using namespace llvm;
@@ -856,6 +859,54 @@ public:
 };
 } // namespace
 
+static cl::opt<bool> XRepeatFMinMax(
+    "riscv-xrepeat-fminmax",
+    cl::desc("XRepeat (VRF core): turn float selects that are exactly a "
+             "min/max with a constant into minimumnum/maximumnum"),
+    cl::init(true), cl::Hidden);
+
+namespace {
+// XRepeat (VRF core): fmin.s/fmax.s repeat, but a clamp or ReLU written as a
+// compare and a select (x > C ? x : C) reaches the vectorizers as a select,
+// which they can't turn into a burst. Replace the selects that are a min/max
+// of a value and a constant with llvm.minimumnum/maximumnum (see
+// RISCV::getXRepeatFMinMax for when they are).
+class RISCVXRepeatFMinMaxPass : public PassInfoMixin<RISCVXRepeatFMinMaxPass> {
+  const RISCVTargetMachine &TM;
+
+public:
+  RISCVXRepeatFMinMaxPass(const RISCVTargetMachine &TM) : TM(TM) {}
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+    if (!XRepeatFMinMax ||
+        !TM.getSubtarget<RISCVSubtarget>(F).hasXRepeatVRFVectors())
+      return PreservedAnalyses::all();
+    bool Changed = false;
+    for (Instruction &I : make_early_inc_range(instructions(F))) {
+      auto *SI = dyn_cast<SelectInst>(&I);
+      Value *V;
+      Constant *C;
+      if (!SI)
+        continue;
+      Intrinsic::ID ID = RISCV::getXRepeatFMinMax(*SI, V, C);
+      if (ID == Intrinsic::not_intrinsic)
+        continue;
+      IRBuilder<> B(SI);
+      Value *MinMax = B.CreateBinaryIntrinsic(ID, V, C, nullptr, SI->getName());
+      SI->replaceAllUsesWith(MinMax);
+      Value *Cond = SI->getCondition();
+      SI->eraseFromParent();
+      RecursivelyDeleteTriviallyDeadInstructions(Cond);
+      Changed = true;
+    }
+    if (!Changed)
+      return PreservedAnalyses::all();
+    PreservedAnalyses PA;
+    PA.preserveSet<CFGAnalyses>();
+    return PA;
+  }
+};
+} // namespace
+
 void RISCVTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
 #define GET_PASS_REGISTRY "RISCVPassRegistry.def"
 #include "llvm/Passes/TargetPassRegistry.inc"
@@ -868,8 +919,10 @@ void RISCVTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
 
   PB.registerVectorizerStartEPCallback(
       [this](FunctionPassManager &FPM, OptimizationLevel Level) {
-        if (Level.getSpeedupLevel() >= 2)
+        if (Level.getSpeedupLevel() >= 2) {
+          FPM.addPass(RISCVXRepeatFMinMaxPass(*this));
           FPM.addPass(RISCVXRepeatLoopFusionPass(*this));
+        }
       });
 }
 

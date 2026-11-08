@@ -906,6 +906,7 @@ Each source either walks (a vector, its mask bit set) or stays fixed (a splat: o
 | `add sub and or xor shl srl sra` | `xr.add` … `xr.sra`; with a constant splat that fits, `xr.addi xr.andi xr.ori xr.xori xr.slli xr.srli xr.srai` |
 | `mul`, `add(mul a, b), c` | `xr.mac` (zero addend from `xr.mv.vx f, zero` for a plain multiply) |
 | `fadd fsub fmul`, `fma` / `fmuladd` | `fadd.s fsub.s fmul.s fmadd.s` (dynamic rounding mode) |
+| `fminnum fmaxnum`, `fminimumnum fmaximumnum` | `fmin.s fmax.s` (Phase 19) |
 | splat on its own | `xr.addi vd, s, 0` with only rd walking |
 | copy (`copyPhysReg`) | `xr.addi vd, vs, 0` |
 | element at a constant index | the F register itself (`f32`), or `xr.mv.xv`/`xr.mv.vx` (`i32`) |
@@ -1090,7 +1091,7 @@ Nothing in LLVM changed in this phase.
   or store is `x[rs1] + imm + k·stride`. A load's destination always walks; a store's value walks
   only with `mask[2]`.
 - Repeatable: `flw`, `fsw`, `xr.lw`, `xr.sw`, `xr.<alu>`, `xr.<alu>i`, `xr.mac`, `fadd.s`,
-  `fsub.s`, `fmul.s`, `fmadd.s`.
+  `fsub.s`, `fmul.s`, `fmadd.s`, `fmin.s`, `fmax.s`.
 - The steps run one after another, each reading its sources and then writing its result.
 - The F extension is IEEE single precision: computed exactly and rounded once (`fmadd.s` is
   fused), all rounding modes, canonical NaN. `fflags` is not tracked.
@@ -1607,6 +1608,82 @@ loops; resnet8, gepdot, mlp and axpy none (resnet8's assembly is byte-identical 
 - The VRF core now takes the fewest steps of all four versions on dotxvf, gepdot (tied), resnet8 and
   bert_tiny. On axpy it is level with `xrepeatint` in ops, and on mlp +31 ops.
 
+## Phase 19 — fmin.s / fmax.s
+
+The hand-written f32 kernels clamp and ReLU their outputs with `fmax.s`/`fmin.s` + REPEAT (mask
+`1011`, a vector and one fixed register), and they pass their checksums on the RTL, so the core
+repeats these two instructions. `fsgnj*.s` + REPEAT is never used by the hand code and stays out
+until it is confirmed.
+
+### Instruction selection
+
+| File | Change |
+|---|---|
+| `RISCVInstrInfoXRepeat.td` | `PseudoXRF_FMIN_S_<W>_<VV,VS,SV>` / `FMAX_S`, like `FADD_S` but without the rounding mode operand; patterns for `fminnum`/`fmaxnum` and `fminimumnum`/`fmaximumnum` (the same mapping as scalar `fmin.s`/`fmax.s` in `RISCVInstrInfoF.td`). |
+| `RISCVISelLowering.cpp` | `FMINNUM FMAXNUM FMINIMUMNUM FMAXIMUMNUM` legal for `v8f32`/`v16f32` (they were expanded, i.e. scalarized). |
+| `RISCVTargetTransformInfo.cpp` | `minnum maxnum minimumnum maximumnum` cost one burst (they were invalid, so no vectorizer used them). |
+| `sim/rvsim.py` | `fmin.s`/`fmax.s` repeatable. |
+
+### Selects that are a min/max
+
+The benchmarks never call `fmaxf`: a ReLU or a clamp is a compare and a select, which the
+vectorizers can't turn into a burst. `RISCVXRepeatFMinMaxPass` (vectorizer start, VRF core only,
+before the loop fusion) replaces the selects that are a min/max of a value and a constant with
+`llvm.minimumnum`/`maximumnum`. These are IEEE 754-2019 minimumNumber/maximumNumber: a NaN
+operand gives the other one, and −0.0 < +0.0, which is exactly what `fmin.s`/`fmax.s` do. The rule
+is `RISCV::getXRepeatFMinMax`:
+
+- **Exactly** (no fast-math flags), with C a constant that is not a NaN:
+
+  | select | is | unless |
+  |---|---|---|
+  | `x > C ? x : C` | maximumNumber(x, C) | C = −0.0 (x = +0.0 gives −0.0) |
+  | `x >= C ? x : C` | maximumNumber(x, C) | C = +0.0 (x = −0.0 gives −0.0) |
+  | `x < C ? x : C` | minimumNumber(x, C) | C = +0.0 |
+  | `x <= C ? x : C` | minimumNumber(x, C) | C = −0.0 |
+
+  The compare must be ordered, so that a NaN x selects C; C on the true side is the same with the
+  inverse (unordered) compare. `x < C ? C : x` is **not** a max: a NaN x selects x. This is the
+  form of resnet8's ReLU and of `clamp8` in bert_tiny, so without fast-math they stay selects.
+- **With the compare's fast-math flags**: `nnan` allows any compare and either side; `nsz` drops
+  the conditions on C's sign; with both, the clamp InstCombine makes of two selects,
+  `x > C ? min(x, C2) : C` with C2 ≥ C, is max(min(x, C2), C). Clang puts the flags on the `fcmp`,
+  not on the `select`, which is why InstCombine's own select → `minnum`/`maxnum` often doesn't fire
+  under `-ffast-math`.
+
+`isXRepeatVectorizableSmallLoop` (keep-small-loops, Phase 7) accepts these selects and the min/max
+intrinsics, so a small loop with a clamp stays rolled like one with an `fadd`.
+
+| C code (`a[i]` → `b[i]`) | default | `-ffinite-math-only` | `-ffast-math` |
+|---|---|---|---|
+| `a > 0 ? a : 0` | `fmax.s` + REPEAT | `fmax.s` + REPEAT | `fmax.s` + REPEAT |
+| `a < 127 ? a : 127` | `fmin.s` + REPEAT | `fmin.s` + REPEAT | `fmin.s` + REPEAT |
+| both bounds of a clamp | `fmax.s`, `fmin.s` + REPEAT | `fmax.s`, `fmin.s` + REPEAT | `fmin.s`, `fmax.s` + REPEAT |
+| `a < 0 ? 0 : a` | compare + select (scalar) | scalar (x = −0.0) | `fmax.s` + REPEAT |
+| `a > -0.0 ? a : -0.0` | compare + select (scalar) | scalar | `fmax.s` + REPEAT |
+
+### Tests
+
+- `CodeGen/RISCV/xrepeat-vrf-minmax.ll`: every form, 8 and 16 wide.
+- `CodeGen/RISCV/xrepeat-vrf-fminmax.ll`: the pass, each rule and its counter-examples; without
+  XRepeat nothing changes.
+- `LoopVectorize/RISCV/xrepeat-vrf.ll` (`@clamp`) and `LoopUnroll/RISCV/xrepeat-vrf-keep-small-loops.ll`
+  (`@relu_tc8`, `@relu_nan_tc8`).
+- `sim/tests/kernels.c`: 9 min/max kernels over NaN, ±0.0, ±∞, the bounds and their neighbours.
+  The reference is plain `rv32imf`, where the pass doesn't run, so it checks the exact rules bit
+  for bit against compare + select. All 57 kernels give the same hashes at every N.
+
+### Effect on the benchmarks
+
+None yet, by design. The exact forms only occur in mlp's ReLU, and every clamp in the benchmarks
+sits in a per-output epilogue, after a reduction loop, so there is no vector to clamp until the
+outputs are computed eight at a time (unroll-and-jam).
+
+Known limitation, from Phase 7: when the pointers may alias, a kept small loop is not vectorized
+either, because the loop vectorizer emits no runtime alias check for a trip count below 16
+("Runtime ptr check is required with -Os/-Oz"). It stays a rolled scalar loop, slower than the
+unrolled one; this applies to an `fadd` loop just the same.
+
 ## Installing from scratch
 
 These steps build the modified clang on a fresh Linux machine. They reproduce the build used for
@@ -1815,6 +1892,7 @@ in that window.
 |---|---|
 | `-fno-vectorize -fno-slp-vectorize` | No vectorization: scalar code, even with XRepeat. |
 | `-mllvm -riscv-xrepeat-loop-fusion=false` | No fusion of loops that share a load before the vectorizers (Phase 18). |
+| `-mllvm -riscv-xrepeat-fminmax=false` | Float clamps/ReLUs written as compare + select stay selects instead of becoming `fmin.s`/`fmax.s` (Phase 19). |
 | `-mllvm -riscv-xrepeat-keep-small-loops=false` | Small constant-trip-count loops are fully unrolled as usual, instead of kept rolled for the vectorizer (Phase 7). |
 | `-mllvm -force-vector-width=8` (or 16) | Force a vectorization factor, ignoring the cost model. Only for experiments; it can spill. |
 

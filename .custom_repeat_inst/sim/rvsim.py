@@ -21,7 +21,7 @@
             value when mask[2] is set; the address of a repeated load or store
             is x[rs1] + imm + k * stride (stride signed).
             Repeatable: flw, fsw, xr.lw, xr.sw, xr.<alu>, xr.<alu>i, xr.mac,
-            fadd.s, fsub.s, fmul.s, fmadd.s.
+            fadd.s, fsub.s, fmul.s, fmadd.s, fmin.s, fmax.s.
 
 The repeated steps run one after another, each reading its sources and then
 writing its result, so a fixed rd accumulates in element order.
@@ -328,8 +328,8 @@ def vrf_repeat_kind(p):
         return REPEAT_I
     if op == 0x43 and (f7 & 3) == 0:
         return REPEAT_R4
-    if op == 0x53 and f7 in (0x00, 0x04, 0x08):
-        return REPEAT_R
+    if op == 0x53 and (f7 in (0x00, 0x04, 0x08) or (f7 == 0x14 and f3 in (0, 1))):
+        return REPEAT_R  # fadd.s, fsub.s, fmul.s, fmin.s, fmax.s
     return None
 
 
