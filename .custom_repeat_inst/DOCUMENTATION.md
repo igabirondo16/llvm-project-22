@@ -1684,6 +1684,36 @@ either, because the loop vectorizer emits no runtime alias check for a trip coun
 ("Runtime ptr check is required with -Os/-Oz"). It stays a rolled scalar loop, slower than the
 unrolled one; this applies to an `fadd` loop just the same.
 
+## Phase 20 — bert_tiny f32: a fused sum of squares at 16 wide
+
+bert_tiny's f32 version failed its checksum with XRepeat (`0x4b72621b` instead of `0xc1a0f97d`),
+on the emulator as well as on the RTL, while scalar `rv32imf` passed. The cause is rounding, not
+a wrong instruction: `layer_norm`'s variance, `varsum += diff * diff`, is an `llvm.fmuladd`.
+Scalar code fuses it into `fmadd.s` (one rounding); at 16 wide it was a `fmul.s` burst and then an
+`fadd.s` burst (two roundings), because 16-wide three-source instructions with two vector sources
+are never generated (two 16-wide blocks fill the f registers, Phase 11). Both are legal for
+`fmuladd`, but they differ in the last bit for 6 of the 32 tokens, and the golden checksum comes
+from fused code. Proof: with `-ffp-contract=off` scalar and XRepeat give the same checksum
+(`0xc19f3bca`).
+
+`x * x` uses one block, so the fused form fits. `PseudoXRF_FMADD_S_16_RED_VV` (fmadd.s + REPEAT,
+mask `0110`) has a pattern only for `seq_fadd(acc, fmul(a, a))`, both `contract` (the repeated
+`$a` in the pattern matches only the same value); a product of two different 16-wide vectors is
+still `fmul.s` + `fadd.s`.
+
+| | checksum | instructions | steps |
+|---|---|---|---|
+| bert_tiny f32 before | `0x4b72621b` (FAIL) | 17,415,169 | 49,536,049 |
+| **bert_tiny f32 now** | **`0xc1a0f97d` (PASS)** | 17,412,609 | 49,514,289 |
+
+The other f32 benchmarks compile to the same code as before. Tests: `xrepeat-vrf-ops.ll`
+(`@fsumsq_contract16`, and `@fdot_contract16v`, which stays unfused); `sim/tests/kernels.c`
+`fsumsq`/`fvar`, now bit-identical to scalar code at every N.
+
+Note for experiments: `-mllvm -force-vector-width=N` counts as an explicit vectorization hint, so
+the loop vectorizer may then reorder float reductions (one accumulator per lane, mask `1111`) and
+the result changes again (bert_tiny: `0xd0dfbe11`). Don't use it to check float results.
+
 ## Installing from scratch
 
 These steps build the modified clang on a fresh Linux machine. They reproduce the build used for

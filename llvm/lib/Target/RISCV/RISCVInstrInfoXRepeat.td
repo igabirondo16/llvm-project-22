@@ -689,6 +689,15 @@ def P # FMADD_S_ # W # _RED_ # XRFKinds<AB>.Name
                       (ins XRFSrc<V, AB[0]>.RC:$rs1, XRFSrc<V, AB[1]>.RC:$rs2,
                            FPR32:$rs3, frmarg:$frm), "$rd = $rs3">;
 }
+// 16 wide, two vector factors don't fit (XRFFits), except when they are the
+// same block: a sum of squares (the variance in a layer norm). Only the
+// pattern for x * x below uses it.
+if !eq(W, 16) then
+let Uses = [FRM], mayRaiseFPException = true in
+def P # FMADD_S_16_RED_VV
+    : XRFRepeatPseudo<FMADD_S, W, 0, 0, (outs FPR32:$rd),
+                      (ins V.RC:$rs1, V.RC:$rs2, FPR32:$rs3, frmarg:$frm),
+                      "$rd = $rs3">;
 
 //===-- Patterns --===//
 
@@ -863,6 +872,18 @@ if XRFFits<W, AB # [0]>.Val then {
             (!cast<Instruction>(P # FMADD_S_ # W # _RED_ # XRFKinds<AB>.Name)
                  OFA, OFB, FPR32:$s, FRM_DYN)>;
 }
+// The square of one vector at 16 wide (see PseudoXRF_FMADD_S_16_RED_VV): the
+// repeated $a matches only when both factors are the same value. Without it
+// the fmul.s and the fadd.s round separately, unlike scalar code, which fuses
+// llvm.fmuladd into fmadd.s.
+if !eq(W, 16) then
+let AddedComplexity = 2 in
+def : Pat<(f32 (riscv_xrf_seq_fadd_contract
+                   (f32 FPR32:$s),
+                   (FVT (riscv_xrf_fmul_contract (FVT V.RC:$a),
+                                                 (FVT V.RC:$a))))),
+          (!cast<Instruction>(P # FMADD_S_16_RED_VV)
+               V.RC:$a, V.RC:$a, FPR32:$s, FRM_DYN)>;
 // A dot product: one MAC into the accumulator.
 // (Sources as for the integer operations above; at least one is a vector.)
 foreach A = [0, 1, 2] in

@@ -900,6 +900,48 @@ define float @fdot_contract16s(<16 x float> %a, float %k, float %s) {
   ret float %r
 }
 
+; 16 wide, a sum of squares: both factors are the same block, so the fused
+; form fits (one fmadd.s + REPEAT, mask 0110), as scalar code fuses fmuladd.
+define float @fsumsq_contract16(ptr %p, float %s) {
+; CHECK-LABEL: fsumsq_contract16:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    fmv.w.x fa5, a1
+; CHECK-NEXT:    li a1, 4
+; CHECK-NEXT:    flw fa6, 0(a0)
+; CHECK-NEXT:    xr.repeat 1, a1, 15
+; CHECK-NEXT:    fmadd.s fa5, fa6, fa6, fa5
+; CHECK-NEXT:    xr.repeat 6, zero, 15
+; CHECK-NEXT:    fmv.x.w a0, fa5
+; CHECK-NEXT:    ret
+  %a = load <16 x float>, ptr %p
+  %m = fmul contract <16 x float> %a, %a
+  %r = call contract float @llvm.vector.reduce.fadd.v16f32(float %s, <16 x float> %m)
+  ret float %r
+}
+
+; ... but two different 16-wide vectors don't fit: fmul.s, then fadd.s.
+define float @fdot_contract16v(ptr %p, ptr %q, float %s) {
+; CHECK-LABEL: fdot_contract16v:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    li a3, 4
+; CHECK-NEXT:    flw ft0, 0(a0)
+; CHECK-NEXT:    xr.repeat 1, a3, 15
+; CHECK-NEXT:    flw fa6, 0(a1)
+; CHECK-NEXT:    xr.repeat 1, a3, 15
+; CHECK-NEXT:    fmul.s ft0, ft0, fa6
+; CHECK-NEXT:    xr.repeat 7, zero, 15
+; CHECK-NEXT:    fmv.w.x fa6, a2
+; CHECK-NEXT:    fadd.s fa6, fa6, ft0
+; CHECK-NEXT:    xr.repeat 4, zero, 15
+; CHECK-NEXT:    fmv.x.w a0, fa6
+; CHECK-NEXT:    ret
+  %a = load <16 x float>, ptr %p
+  %b = load <16 x float>, ptr %q
+  %m = fmul contract <16 x float> %a, %b
+  %r = call contract float @llvm.vector.reduce.fadd.v16f32(float %s, <16 x float> %m)
+  ret float %r
+}
+
 ; Without `contract` the products are rounded first: fmul.s, then fadd.s.
 define float @fdot_nocontract(<8 x float> %a, <8 x float> %b, float %s) {
 ; CHECK-LABEL: fdot_nocontract:
@@ -976,7 +1018,7 @@ define i32 @loop_red_sum_of_products(ptr %a, ptr %b, i32 %n) {
 ; CHECK-NEXT:    addi a0, a0, 32
 ; CHECK-NEXT:    fmv.w.x fa5, zero
 ; CHECK-NEXT:    li a3, 4
-; CHECK-NEXT:  .LBB34_1: # %loop
+; CHECK-NEXT:  .LBB36_1: # %loop
 ; CHECK-NEXT:    # =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    flw ft0, -32(a0)
 ; CHECK-NEXT:    xr.repeat 1, a3, 7
@@ -993,7 +1035,7 @@ define i32 @loop_red_sum_of_products(ptr %a, ptr %b, i32 %n) {
 ; CHECK-NEXT:    addi a2, a2, -1
 ; CHECK-NEXT:    addi a1, a1, 64
 ; CHECK-NEXT:    addi a0, a0, 64
-; CHECK-NEXT:    bnez a2, .LBB34_1
+; CHECK-NEXT:    bnez a2, .LBB36_1
 ; CHECK-NEXT:  # %bb.2: # %exit
 ; CHECK-NEXT:    fmv.x.w a0, fa5
 ; CHECK-NEXT:    ret
@@ -1030,7 +1072,7 @@ define i32 @chained_loops(ptr %a, ptr %b, i32 %n) {
 ; CHECK-NEXT:    fmv.w.x fa5, zero
 ; CHECK-NEXT:    li a3, 4
 ; CHECK-NEXT:    mv a4, a2
-; CHECK-NEXT:  .LBB35_1: # %l1
+; CHECK-NEXT:  .LBB37_1: # %l1
 ; CHECK-NEXT:    # =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    flw ft0, 0(a0)
 ; CHECK-NEXT:    xr.repeat 1, a3, 7
@@ -1038,10 +1080,10 @@ define i32 @chained_loops(ptr %a, ptr %b, i32 %n) {
 ; CHECK-NEXT:    xr.add fa5, fa5, ft0
 ; CHECK-NEXT:    xr.repeat 4, zero, 7
 ; CHECK-NEXT:    addi a0, a0, 32
-; CHECK-NEXT:    bnez a4, .LBB35_1
+; CHECK-NEXT:    bnez a4, .LBB37_1
 ; CHECK-NEXT:  # %bb.2: # %mid
 ; CHECK-NEXT:    li a0, 4
-; CHECK-NEXT:  .LBB35_3: # %l2
+; CHECK-NEXT:  .LBB37_3: # %l2
 ; CHECK-NEXT:    # =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    flw ft0, 0(a1)
 ; CHECK-NEXT:    xr.repeat 1, a0, 7
@@ -1049,7 +1091,7 @@ define i32 @chained_loops(ptr %a, ptr %b, i32 %n) {
 ; CHECK-NEXT:    xr.add fa5, fa5, ft0
 ; CHECK-NEXT:    xr.repeat 4, zero, 7
 ; CHECK-NEXT:    addi a1, a1, 32
-; CHECK-NEXT:    bnez a2, .LBB35_3
+; CHECK-NEXT:    bnez a2, .LBB37_3
 ; CHECK-NEXT:  # %bb.4: # %exit
 ; CHECK-NEXT:    fmv.x.w a0, fa5
 ; CHECK-NEXT:    ret

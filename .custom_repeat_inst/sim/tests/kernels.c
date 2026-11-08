@@ -169,6 +169,12 @@ NI float f_sum(const float *a, int n) { float s = 1.0f; for (int i = 0; i < n; i
 NI float f_dot(const float *a, const float *b, int n) {
     float s = 0; for (int i = 0; i < n; i++) s += a[i] * b[i]; return s;
 }
+// Sums of squares: at 16 wide both factors are one block, so fmuladd is fused (fmadd.s + REPEAT,
+// mask 0110) like scalar code; split into fmul.s + fadd.s they round twice and differ.
+NI float f_sumsq(const float *a, int n) { float s = 0; for (int i = 0; i < n; i++) s += a[i] * a[i]; return s; }
+NI float f_var(const float *a, float m, int n) {
+    float s = 0; for (int i = 0; i < n; i++) { float d = a[i] - m; s += d * d; } return s;
+}
 NI float f_dot_nc(const float *a, const float *b, int n) {
 #pragma clang fp contract(off)
     float s = 0; for (int i = 0; i < n; i++) s += a[i] * b[i]; return s;
@@ -252,6 +258,8 @@ int main(void) {
     fr = f_sum(FA, N); REPORT1("fsum", fr);
     fr = f_dot(FA, FB, N); REPORT1("fdot", fr);
     fr = f_dot_nc(FA, FB, N); REPORT1("fdot_nc", fr);
+    fr = f_sumsq(FA, N); REPORT1("fsumsq", fr);
+    fr = f_var(FA, 0.37f, N); REPORT1("fvar", fr);
     f_c16(FD, 0.7f); REPORT("fc16", FD, NMAX);
     f_c64(FD, FB, 2.5f); REPORT("fc64", FD, NMAX);
     fr = f_sum64(FC); REPORT1("fsum64", fr);
