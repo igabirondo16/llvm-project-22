@@ -1084,7 +1084,7 @@ class RISCVXRepeatUnrollAndJamPass
       Subs.push_back(Sub);
       Segs.push_back(BB = Exit);
     }
-    if (Segs.size() + Subs.size() != L->getNumBlocks() || Subs.empty())
+    if (Segs.size() + Subs.size() != L->getNumBlocks())
       return false;
 
     for (PHINode &Phi : L->getHeader()->phis()) {
@@ -1125,20 +1125,70 @@ class RISCVXRepeatUnrollAndJamPass
     return true;
   }
 
+  // An innermost output loop that computes a whole dot product per iteration,
+  // its reduction loop fully unrolled (resnet8's first convolution, 27 MACs
+  // per output):
+  //   for (c) out[c] = f(b[c] + w[c][0] * x0 + w[c][1] * x1 + ...);
+  // one block, a chain of float fmuladds, no float phis (nothing carried from
+  // one output to the next), loads invariant in L (x) or stepping by a
+  // constant with it (w's rows). Cloned for N outputs (jamSequence with no
+  // inner loop), SLP vectorizes across them like a jammed nest. Column mode
+  // only: the loop vectorizer would see the same loop again in row mode.
+  static bool isDotPerIteration(Loop *L, ScalarEvolution &SE) {
+    if (L->getNumBlocks() != 1)
+      return false;
+    for (PHINode &Phi : L->getHeader()->phis())
+      if (!Phi.getType()->isIntegerTy() && !Phi.getType()->isPointerTy())
+        return false;
+    unsigned Chain = 0;
+    for (Instruction &I : *L->getHeader()) {
+      if (auto *II = dyn_cast<IntrinsicInst>(&I);
+          II && II->getIntrinsicID() == Intrinsic::fmuladd &&
+          II->getType()->isFloatTy())
+        if (auto *Acc = dyn_cast<IntrinsicInst>(II->getArgOperand(2));
+            Acc && Acc->getIntrinsicID() == Intrinsic::fmuladd)
+          ++Chain;
+      auto *LI = dyn_cast<LoadInst>(&I);
+      if (!LI)
+        continue;
+      const SCEV *Ptr = SE.getSCEV(LI->getPointerOperand());
+      if (SE.isLoopInvariant(Ptr, L))
+        continue;
+      auto *AR = dyn_cast<SCEVAddRecExpr>(Ptr);
+      if (!AR || AR->getLoop() != L || !AR->isAffine() ||
+          !isa<SCEVConstant>(AR->getStepRecurrence(SE)))
+        return false;
+    }
+    // A dot product of a handful of elements, not an elementwise loop.
+    return Chain >= 4;
+  }
+
   // The number of outputs to jam for L, or 0 if L isn't a candidate.
   static unsigned getCount(Loop *L, ScalarEvolution &SE) {
-    if (L->isInnermost() || !L->isLoopSimplifyForm() || !L->getExitBlock())
+    if (!L->isLoopSimplifyForm() || !L->getExitBlock())
+      return 0;
+    if (L->isInnermost() && (XRepeatUnrollJam != XRepeatUJMode::Column ||
+                             !isDotPerIteration(L, SE)))
       return 0;
     unsigned TC = SE.getSmallConstantTripCount(L);
     SmallVector<unsigned, 2> Counts;
     if (XRepeatUnrollJamCount)
       Counts.push_back(XRepeatUnrollJamCount);
+    else if (L->isInnermost())
+      // One vector of outputs: the dot product's invariant operands (its
+      // other vector, hoisted) already take most of the F registers.
+      Counts.push_back(8);
     else if (XRepeatUnrollJam == XRepeatUJMode::Row)
       Counts.push_back(4);
     else
       Counts.append({16, 8});
+    // An innermost output loop keeps at least two iterations: run out by the
+    // jam, its weight loads would no longer depend on any loop around them,
+    // and LICM would hoist every weight block of the dot product out of the
+    // pixel loops, where they can't all stay in registers.
     for (unsigned C : Counts)
-      if (C >= 2 && TC >= C && TC % C == 0) {
+      if (C >= 2 && TC >= C && TC % C == 0 &&
+          (!L->isInnermost() || XRepeatUnrollJamCount || TC > C)) {
         for (Loop *Sub : L->getSubLoops())
           if (!isJammableInner(Sub, L, SE))
             return 0;
@@ -1189,8 +1239,14 @@ class RISCVXRepeatUnrollAndJamPass
       return C ? C : V;
     };
 
-    // Copy J of a header phi: the phi plus J steps.
+    // No inner loop: the end of the per-output fmuladd chain (see
+    // isDotPerIteration), vectorized across the copies below.
     BasicBlock *Header = L->getHeader();
+    Instruction *DotEnd = nullptr;
+    if (Subs.empty())
+      DotEnd = getDotEnd(Header);
+
+    // Copy J of a header phi: the phi plus J steps.
     SmallVector<Instruction *, 32> HeaderOrig = BodyOf(Header);
     IRBuilder<> B(&*Header->getFirstInsertionPt());
     SmallVector<PHINode *, 4> HeaderPhis;
@@ -1260,6 +1316,213 @@ class RISCVXRepeatUnrollAndJamPass
     }
     auto *Br = cast<BranchInst>(Latch->getTerminator());
     Br->setCondition(Map(N - 1, Br->getCondition()));
+
+    if (DotEnd) {
+      SmallVector<Instruction *, 16> Ends;
+      for (unsigned J = 0; J < N; ++J)
+        Ends.push_back(cast<Instruction>(Map(J, DotEnd)));
+      vectorizeDots(Header, Ends, SE);
+    }
+  }
+
+  // The fmuladd ending the (only) float fmuladd chain of BB: the one that
+  // isn't the addend of another.
+  static Instruction *getDotEnd(BasicBlock *BB) {
+    auto IsFMulAdd = [](const Value *V) {
+      auto *II = dyn_cast<IntrinsicInst>(V);
+      return II && II->getIntrinsicID() == Intrinsic::fmuladd &&
+             II->getType()->isFloatTy();
+    };
+    Instruction *End = nullptr;
+    for (Instruction &I : *BB) {
+      if (!IsFMulAdd(&I))
+        continue;
+      if (any_of(I.uses(), [&](const Use &U) {
+            return IsFMulAdd(U.getUser()) && U.getOperandNo() == 2;
+          }))
+        continue;
+      if (End)
+        return nullptr;
+      End = &I;
+    }
+    return End;
+  }
+
+  // BB holds N copies of a per-output dot product (an innermost output loop
+  // after jamSequence), Ends[J] the end of copy J's fmuladd chain. SLP can't
+  // vectorize them: its only seeds are the copies' stores, whose values come
+  // out of compares and selects (clamps) the VRF core has no vector form of,
+  // and each store sits among the next copies' loads. So vectorize the chains
+  // here, as SLP would, 8 copies per vector: identical lanes become a splat,
+  // fmuladd/fmul/fadd/fsub lanes the vector operation, loads whose addresses
+  // step by a constant a block load (contiguous) or a strided one. The rest
+  // of the block (the copies' epilogues) moves after the chains and takes the
+  // lanes with extractelement. If a chain has anything else, BB is left as is.
+  static void vectorizeDots(BasicBlock *BB, ArrayRef<Instruction *> Ends,
+                            ScalarEvolution &SE) {
+    constexpr unsigned VF = 8;
+    unsigned N = Ends.size();
+    if (N % VF)
+      return;
+    Type *FTy = Ends[0]->getType();
+    auto *VTy = FixedVectorType::get(FTy, VF);
+
+    // The chains: everything in BB the ends depend on.
+    SmallPtrSet<Instruction *, 32> Chain;
+    SmallVector<Instruction *, 64> Worklist(Ends.begin(), Ends.end());
+    while (!Worklist.empty()) {
+      Instruction *I = Worklist.pop_back_val();
+      if (I->getParent() != BB || isa<PHINode>(I) || !Chain.insert(I).second)
+        continue;
+      for (Value *Op : I->operands())
+        if (auto *OI = dyn_cast<Instruction>(Op))
+          Worklist.push_back(OI);
+    }
+
+    // Lane J of a tuple of values, one per copy: what each is (all the same,
+    // the same operation in every copy, or loads stepping by a constant).
+    auto AllSame = [](ArrayRef<Value *> Lanes) {
+      return all_equal(Lanes);
+    };
+    auto LoadStride = [&](ArrayRef<Value *> Lanes) -> std::optional<int64_t> {
+      const SCEV *P0 = SE.getSCEV(cast<LoadInst>(Lanes[0])->getPointerOperand());
+      std::optional<int64_t> Stride;
+      for (unsigned J = 1; J < Lanes.size(); ++J) {
+        auto *D = dyn_cast<SCEVConstant>(SE.getMinusSCEV(
+            SE.getSCEV(cast<LoadInst>(Lanes[J])->getPointerOperand()), P0));
+        if (!D || D->getAPInt().getSignificantBits() > 32)
+          return std::nullopt;
+        int64_t Off = D->getAPInt().getSExtValue();
+        if (!Stride)
+          Stride = Off;
+        if (Off != *Stride * J)
+          return std::nullopt;
+      }
+      return Stride;
+    };
+    auto Kind = [&](ArrayRef<Value *> Lanes) -> unsigned {
+      // 0: can't, 1: splat, 2: fmuladd, 3: binary op, 4: load.
+      if (AllSame(Lanes))
+        return Lanes[0]->getType() == FTy ? 1 : 0;
+      auto *I0 = dyn_cast<Instruction>(Lanes[0]);
+      if (!I0 || !Chain.count(I0) || I0->getType() != FTy)
+        return 0;
+      for (Value *V : Lanes) {
+        auto *I = dyn_cast<Instruction>(V);
+        if (!I || !Chain.count(I) || I->getOpcode() != I0->getOpcode() ||
+            !I->isSameOperationAs(I0))
+          return 0;
+      }
+      if (auto *II = dyn_cast<IntrinsicInst>(I0))
+        return II->getIntrinsicID() == Intrinsic::fmuladd ? 2 : 0;
+      if (isa<BinaryOperator>(I0) &&
+          is_contained({Instruction::FMul, Instruction::FAdd,
+                        Instruction::FSub},
+                       I0->getOpcode()))
+        return 3;
+      if (auto *LI = dyn_cast<LoadInst>(I0))
+        return LI->isSimple() && LoadStride(Lanes) ? 4 : 0;
+      return 0;
+    };
+    auto OperandLanes = [](ArrayRef<Value *> Lanes, unsigned Op) {
+      SmallVector<Value *, VF> Res;
+      for (Value *V : Lanes)
+        Res.push_back(cast<Instruction>(V)->getOperand(Op));
+      return Res;
+    };
+
+    // Check first, so that nothing is created for a chain that can't be.
+    std::function<bool(ArrayRef<Value *>)> CanVec =
+        [&](ArrayRef<Value *> Lanes) -> bool {
+      switch (Kind(Lanes)) {
+      case 1:
+      case 4:
+        return true;
+      case 2:
+        return CanVec(OperandLanes(Lanes, 0)) &&
+               CanVec(OperandLanes(Lanes, 1)) && CanVec(OperandLanes(Lanes, 2));
+      case 3:
+        return CanVec(OperandLanes(Lanes, 0)) && CanVec(OperandLanes(Lanes, 1));
+      }
+      return false;
+    };
+    SmallVector<SmallVector<Value *, VF>, 2> Groups;
+    for (unsigned G = 0; G < N / VF; ++G) {
+      Groups.emplace_back(Ends.begin() + G * VF, Ends.begin() + (G + 1) * VF);
+      if (!CanVec(Groups.back()))
+        return;
+    }
+
+    // The chains first, the rest of the block after them, in order.
+    SmallVector<Instruction *, 128> Rest;
+    for (Instruction &I : *BB)
+      if (!isa<PHINode>(I) && !I.isTerminator() && !Chain.count(&I))
+        Rest.push_back(&I);
+    for (Instruction *I : Rest)
+      I->moveBefore(BB->getTerminator()->getIterator());
+
+    IRBuilder<> B(Rest.empty() ? BB->getTerminator() : Rest.front());
+    DenseMap<Value *, Value *> Built;
+    std::function<Value *(ArrayRef<Value *>)> Build =
+        [&](ArrayRef<Value *> Lanes) -> Value * {
+      if (Value *V = Built.lookup(Lanes[0]); V && !AllSame(Lanes))
+        return V;
+      Value *Res = nullptr;
+      switch (Kind(Lanes)) {
+      case 1:
+        Res = B.CreateVectorSplat(VF, Lanes[0]);
+        break;
+      case 2: {
+        // The addend (the chain so far) first: each term's loads then come
+        // right before its fmuladd, one weight block live at a time.
+        Value *D = Build(OperandLanes(Lanes, 2));
+        Value *A = Build(OperandLanes(Lanes, 0));
+        Value *C = Build(OperandLanes(Lanes, 1));
+        Res = B.CreateIntrinsic(Intrinsic::fmuladd, {VTy}, {A, C, D});
+        break;
+      }
+      case 3: {
+        auto *I0 = cast<BinaryOperator>(Lanes[0]);
+        Value *A = Build(OperandLanes(Lanes, 0));
+        Value *C = Build(OperandLanes(Lanes, 1));
+        Res = B.CreateBinOp(I0->getOpcode(), A, C);
+        cast<Instruction>(Res)->copyIRFlags(I0);
+        break;
+      }
+      case 4: {
+        auto *L0 = cast<LoadInst>(Lanes[0]);
+        int64_t Stride = *LoadStride(Lanes);
+        Value *Ptr = L0->getPointerOperand();
+        if (Stride == 0)
+          Res = B.CreateVectorSplat(VF, L0);
+        else if (Stride == int64_t(FTy->getPrimitiveSizeInBits() / 8))
+          Res = B.CreateAlignedLoad(VTy, Ptr, L0->getAlign());
+        else
+          Res = B.CreateIntrinsic(
+              Intrinsic::experimental_vp_strided_load,
+              {VTy, Ptr->getType(), B.getInt32Ty()},
+              {Ptr, B.getInt32(Stride),
+               ConstantVector::getSplat(ElementCount::getFixed(VF),
+                                        B.getTrue()),
+               B.getInt32(VF)});
+        break;
+      }
+      default:
+        llvm_unreachable("checked by CanVec");
+      }
+      if (!AllSame(Lanes))
+        Built[Lanes[0]] = Res;
+      return Res;
+    };
+    for (auto [G, Lanes] : enumerate(Groups)) {
+      Value *V = Build(Lanes);
+      for (unsigned J = 0; J < VF; ++J) {
+        Value *E = B.CreateExtractElement(V, J);
+        Ends[G * VF + J]->replaceAllUsesWith(E);
+      }
+    }
+    for (Instruction *E : Ends)
+      RecursivelyDeleteTriviallyDeadInstructions(E);
   }
 
 public:
@@ -1289,8 +1552,9 @@ public:
     bool Changed = false;
     for (auto [L, Count] : Candidates) {
       SmallVector<Loop *, 9> Subs;
-      if (L->getSubLoops().size() > 1) {
-        // A sequence of inner loops (a convolution): jammed here.
+      if (L->getSubLoops().size() != 1) {
+        // A sequence of inner loops (a convolution), or none (a whole dot
+        // product per output): jammed here.
         SmallVector<BasicBlock *, 10> Segs;
         if (!getSequence(L, SE, Segs, Subs))
           continue;
@@ -1318,9 +1582,12 @@ public:
       // jammed accumulators instead.
       addStringMetadataToLoop(L, "llvm.loop.unroll.disable");
       addStringMetadataToLoop(L, XRepeatJammedAttr, 1);
-      if (XRepeatUnrollJam == XRepeatUJMode::Column)
+      if (XRepeatUnrollJam == XRepeatUJMode::Column) {
         for (Loop *Sub : Subs)
           addStringMetadataToLoop(Sub, "llvm.loop.isvectorized", 1);
+        if (L->isInnermost())
+          addStringMetadataToLoop(L, "llvm.loop.isvectorized", 1);
+      }
     }
     if (!Changed)
       return PreservedAnalyses::all();

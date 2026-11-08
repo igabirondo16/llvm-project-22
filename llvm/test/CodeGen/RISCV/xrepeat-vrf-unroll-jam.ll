@@ -381,6 +381,67 @@ exit:
   ret void
 }
 
+; An innermost output loop computing a whole dot product per iteration (the
+; reduction fully unrolled, like resnet8's first convolution): cloned for 8
+; outputs, and the chains vectorized by the pass itself (SLP has no seed: the
+; stored values come out of a clamp). The x operands are hoisted scalars.
+@W4 = global [16 x [5 x float]] zeroinitializer
+@B16 = global [16 x float] zeroinitializer
+@O16 = global [16 x float] zeroinitializer
+
+define void @dot4(float %x0, float %x1, float %x2, float %x3, float %x4) {
+; CHECK-LABEL: @dot4(
+; COL:         loop:
+; COL:           [[B:%.*]] = load <8 x float>, ptr
+; COL:           [[W0:%.*]] = call <8 x float> @llvm.experimental.vp.strided.load.v8f32.p0.i32(ptr {{.*}}, i32 20,
+; COL:           [[F0:%.*]] = call <8 x float> @llvm.fmuladd.v8f32(<8 x float> [[W0]], <8 x float> {{.*}}, <8 x float> [[B]])
+; COL-COUNT-4:   call <8 x float> @llvm.fmuladd.v8f32(
+; COL-NOT:       call float @llvm.fmuladd.f32
+; COL-COUNT-8:   extractelement <8 x float>
+; COL-COUNT-8:   store float
+; COL:           icmp eq i32 {{.*}}, 16
+; ROW:         loop:
+; ROW-COUNT-5:   call float @llvm.fmuladd.f32
+; ROW-NOT:       call float @llvm.fmuladd.f32
+; NONE:        loop:
+; NONE-COUNT-5:  call float @llvm.fmuladd.f32
+; NONE-NOT:      call float @llvm.fmuladd.f32
+; CHECK:       ret void
+entry:
+  br label %loop
+
+loop:
+  %c = phi i32 [ 0, %entry ], [ %c.next, %loop ]
+  %pb = getelementptr inbounds [16 x float], ptr @B16, i32 0, i32 %c
+  %b = load float, ptr %pb
+  %pw0 = getelementptr inbounds [16 x [5 x float]], ptr @W4, i32 0, i32 %c, i32 0
+  %w0 = load float, ptr %pw0
+  %a0 = call float @llvm.fmuladd.f32(float %w0, float %x0, float %b)
+  %pw1 = getelementptr inbounds [16 x [5 x float]], ptr @W4, i32 0, i32 %c, i32 1
+  %w1 = load float, ptr %pw1
+  %a1 = call float @llvm.fmuladd.f32(float %w1, float %x1, float %a0)
+  %pw2 = getelementptr inbounds [16 x [5 x float]], ptr @W4, i32 0, i32 %c, i32 2
+  %w2 = load float, ptr %pw2
+  %a2 = call float @llvm.fmuladd.f32(float %w2, float %x2, float %a1)
+  %pw3 = getelementptr inbounds [16 x [5 x float]], ptr @W4, i32 0, i32 %c, i32 3
+  %w3 = load float, ptr %pw3
+  %a3 = call float @llvm.fmuladd.f32(float %w3, float %x3, float %a2)
+  %pw4 = getelementptr inbounds [16 x [5 x float]], ptr @W4, i32 0, i32 %c, i32 4
+  %w4 = load float, ptr %pw4
+  %a4 = call float @llvm.fmuladd.f32(float %w4, float %x4, float %a3)
+  %v = fmul float %a4, 1.250000e-01
+  %neg = fcmp olt float %v, 0.000000e+00
+  %relu = select i1 %neg, float 0.000000e+00, float %v
+  %po = getelementptr inbounds [16 x float], ptr @O16, i32 0, i32 %c
+  store float %relu, ptr %po
+  %c.next = add nuw nsw i32 %c, 1
+  %c.done = icmp eq i32 %c.next, 16
+  br i1 %c.done, label %exit, label %loop
+
+exit:
+  ret void
+}
+
 ; COL: [[COLINNER]] = distinct !{[[COLINNER]], [[ISVEC:![0-9]+]]}
 ; COL: [[ISVEC]] = !{!"llvm.loop.isvectorized", i32 1}
 ; COL: [[L1]] = distinct !{[[L1]], [[ISVEC]]}

@@ -1993,6 +1993,54 @@ bert's Q/K/V projections now get the column form too (6 of 6 dense nests jammed,
 before). The emulator shows little, because it doesn't charge for the serial FMA chains these
 loops no longer have.
 
+## Phase 25 — resnet8's first convolution (a whole dot product per output)
+
+conv1 has `ci = 3`, so the early full unroll removes all its reduction loops. Its output-channel
+loop is innermost: one block computing `b[c] + w[c][0]·x₀ + … + w[c][26]·x₂₆`, a chain of 27
+`fmuladd`s, with the 27 `x` values hoisted out as scalars. It ran as scalar code: one serial chain
+of 27 `fmadd.s` per output.
+
+The unroll-and-jam pass now also takes such a loop, in column mode only (`isDotPerIteration`): an
+innermost single-block loop with no float phis, a chain of at least 5 float `fmuladd`s, and loads
+that are invariant in the loop or step by a constant with it. `jamSequence` with no inner loop
+clones the block for 8 outputs.
+
+SLP can't vectorize the result. Its only seeds would be the copies' stores, whose values come out
+of the ReLU/clamp compares and selects (the VRF core has no vector form of them), and each store
+sits among the next copies' loads. So the pass vectorizes the chains itself (`vectorizeDots`),
+building what SLP would:
+- identical lanes become a splat (the hoisted `x`);
+- `fmuladd`/`fmul`/`fadd`/`fsub` lanes become the vector operation;
+- loads whose addresses step by a constant become a block load (contiguous: the bias) or
+  `vp.strided.load` (the weights, 108-byte stride).
+
+The addend is built first, so each weight block is loaded right before its `fmadd.s`. The rest of
+the block (the epilogues) moves after the chains and takes the lanes with `extractelement`. If a
+chain contains anything else, the block is left as cloned. The result is one 8-lane `fmadd.s`
+burst with independent lanes per term, bit-exact.
+
+Two limits come from register pressure:
+- **8 outputs, not 16.** The hoisted operands of the dot product already take most of the F
+  registers.
+- **At least two iterations of the output loop are kept.** With 16 of conv1's 16 outputs jammed,
+  the weight addresses no longer depend on any loop, so LICM hoisted all 54 weight blocks out of
+  the pixel loops: 948 spill instructions.
+
+Emulator, f32 column (all checksums PASS; row mode unchanged; 59 differential kernels same; i32
+identical):
+
+| | before (Phase 24) | now |
+|---|---|---|
+| resnet8 conv1 (window 0..1) | 1,258,151 insns / 1,258,151 steps | 469,041 (−63%) / 1,286,193 (+2%) |
+| resnet8 total | 12,072,180 / 33,387,271 | 11,283,102 (−6.5%) / 33,415,345 |
+| bert_tiny total | 13,690,558 / 36,667,486 | 13,149,977 (−4%) / 36,608,057 |
+
+The same rule also picks up bert's attention `score·V` loop (its 32-token sum fully unrolled). The
+steps don't move because the emulator charges every burst element: what changes is that 27 (or
+32) serial `fmadd.s` per output become independent lanes, which only the RTL can show. FP spill
+instructions in the binary: resnet8 72 → 104 and bert 55 → 473. They are mostly scalar reloads of
+the hoisted `x`/`score` values, about as cheap as the loads they replace.
+
 ## Compiling your own code for XRepeat
 
 Write plain C; there are no intrinsics or pragmas. The vectorizers decide what goes into
