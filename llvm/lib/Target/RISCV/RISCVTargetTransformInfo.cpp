@@ -9,7 +9,9 @@
 #include "RISCVTargetTransformInfo.h"
 #include "MCTargetDesc/RISCVMatInt.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Analysis/IVDescriptors.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/CodeGen/CostTable.h"
@@ -49,6 +51,12 @@ static cl::opt<bool> XRepeatKeepSmallLoops(
     "riscv-xrepeat-keep-small-loops",
     cl::desc("XRepeat: don't fully unroll small loops that the loop vectorizer "
              "can turn into whole XRepeat blocks"),
+    cl::init(true), cl::Hidden);
+
+static cl::opt<bool> XRepeatKeepSmallReductions(
+    "riscv-xrepeat-keep-small-reductions",
+    cl::desc("XRepeat (VRF core): also keep small float reduction loops "
+             "(without stores) rolled for the loop vectorizer"),
     cl::init(true), cl::Hidden);
 
 InstructionCost
@@ -3195,6 +3203,7 @@ static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE,
   };
 
   bool HasArith = false, HasStore = false;
+  SmallVector<const Value *, 8> LoadPtrs, StorePtrs;
   for (const BasicBlock *BB : L->blocks()) {
     for (const Instruction &I : *BB) {
       if (isa<PHINode, GetElementPtrInst, BranchInst, ICmpInst>(I) ||
@@ -3231,12 +3240,14 @@ static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE,
         const Value *Ptr = LI->getPointerOperand();
         if (!IsUnitStride(Ptr) && !L->isLoopInvariant(Ptr))
           return false;
+        LoadPtrs.push_back(Ptr);
         continue;
       }
       if (const auto *SI = dyn_cast<StoreInst>(&I)) {
         if (!SI->isSimple() || !IsEltTy(SI->getValueOperand()->getType()) ||
             !IsUnitStride(SI->getPointerOperand()))
           return false;
+        StorePtrs.push_back(SI->getPointerOperand());
         HasStore = true;
         continue;
       }
@@ -3274,7 +3285,45 @@ static bool isXRepeatVectorizableSmallLoop(const Loop *L, ScalarEvolution &SE,
       }
     }
   }
-  return HasArith && HasStore;
+  if (!HasArith)
+    return false;
+
+  // VRF: a float sum (of products) carried around the loop, without stores:
+  // the loop vectorizer makes it an in-order fadd.s/fmadd.s + REPEAT into one
+  // f register, while unrolled it stays scalar (SLP doesn't vectorize
+  // in-order float reductions). A loop with only loads needs no alias checks.
+  if (!HasStore) {
+    if (!VRF || !XRepeatKeepSmallReductions)
+      return false;
+    return any_of(L->getHeader()->phis(), [&](const PHINode &Phi) {
+      RecurrenceDescriptor RD;
+      if (!Phi.getType()->isFloatTy() ||
+          !RecurrenceDescriptor::isReductionPHI(const_cast<PHINode *>(&Phi),
+                                                const_cast<Loop *>(L), RD,
+                                                nullptr, nullptr, nullptr, &SE))
+        return false;
+      RecurKind K = RD.getRecurrenceKind();
+      return K == RecurKind::FAdd || K == RecurKind::FMulAdd;
+    });
+  }
+
+  // Below the loop vectorizer's tiny trip count (16, -vectorizer-min-trip-count)
+  // it won't emit runtime alias checks, so a loop that needs them would stay a
+  // rolled scalar loop, worse than unrolled. Keep it only if no store can
+  // alias a load of another object: same underlying object (the vectorizer
+  // checks the distance), or two distinct identified objects (globals,
+  // allocas, noalias arguments).
+  if (TC < 16)
+    for (const Value *SP : StorePtrs) {
+      const Value *SObj = getUnderlyingObject(SP);
+      for (const Value *LP : concat<const Value *const>(LoadPtrs, StorePtrs)) {
+        const Value *LObj = getUnderlyingObject(LP);
+        if (SObj != LObj &&
+            !(isIdentifiedObject(SObj) && isIdentifiedObject(LObj)))
+          return false;
+      }
+    }
+  return true;
 }
 
 void RISCVTTIImpl::getUnrollingPreferences(

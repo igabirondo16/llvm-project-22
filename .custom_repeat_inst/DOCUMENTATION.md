@@ -1714,6 +1714,49 @@ Note for experiments: `-mllvm -force-vector-width=N` counts as an explicit vecto
 the loop vectorizer may then reorder float reductions (one accumulator per lane, mask `1111`) and
 the result changes again (bert_tiny: `0xd0dfbe11`). Don't use it to check float results.
 
+## Phase 21 — small float reductions
+
+Keep-small-loops (Phase 7) only kept loops with a store. A small reduction loop with none (a dot
+product of 16 or 32 floats) was fully unrolled, and SLP doesn't vectorize an in-order float
+reduction, so it stayed scalar: resnet8's convolutions with 16 and 32 input channels, mlp's second
+layer (32), dotxvf's 8-element products. `isXRepeatVectorizableSmallLoop` now also keeps, on the
+VRF core, a loop without stores whose header has a float `fadd`/`fmuladd` reduction
+(`RecurrenceDescriptor::isReductionPHI`). Loads only need no alias checks. Integer reductions are
+unchanged (SLP vectorizes them unrolled).
+
+The loop vectorizer emits no runtime alias checks for a trip count below 16
+(`-vectorizer-min-trip-count`), so a kept loop with stores that needed them stayed a rolled
+scalar loop, slower than unrolled (Phase 19's known limitation). Below 16 iterations a loop with
+stores is now kept only if no store can alias a load of another object: the same underlying
+object, or two distinct identified objects (globals, allocas, `noalias` arguments). Otherwise it
+is unrolled as without XRepeat.
+
+Results (f32 benchmarks, emulator, all checksums pass; i32 benchmarks unchanged):
+
+| f32 | instructions | steps | ops |
+|---|---|---|---|
+| mlp | 3,873 → **3,030** (−22%) | 9,249 → 9,330 | 8,481 → 8,430 |
+| dotxvf | 10,645 → **3,603** (−66%) | 10,645 → 11,667 | 10,645 → 10,515 |
+| resnet8 | 35,005,525 → **18,755,562** (−46%) | 41,206,860 → 50,073,569 (+21%) | 40,320,955 → 45,599,568 (+13%) |
+
+- **mlp, layer 2**: the outer loop over the 16 outputs is fully unrolled around the kept inner
+  loop, the loop fusion (Phase 18) fuses the 16 copies (they share `hidden[h]`), and SLP
+  vectorizes the 16 accumulators across outputs: per `h`, `hidden[h]` in one f register, a
+  strided load of a column of `W2` and `fmadd.s` mask `1011`, 8 independent lanes. That is the
+  output-dimension vectorization planned for unroll-and-jam, here from fusion + SLP.
+- **dotxvf**: one shared load of `x` and four in-order `fmadd.s` bursts per 8 elements, the
+  hand-written structure; `y[u]` is still stored each iteration (`yreg` may alias).
+- **resnet8**: 46 more conv loops vectorized (9 instructions each). Instructions halve, but the
+  steps grow: a 16-element reduction is two vector iterations with their loop control, while the
+  unrolled scalar code had none, and a burst still costs one step per element. Which metric
+  follows the core's cycles has to be measured on the RTL; `-riscv-xrepeat-keep-small-reductions
+  =false` gives the previous code for that comparison (byte-identical for resnet8). Fully
+  unrolling these vectorized loops (≤ 4 iterations) was tried and rejected: 197 → 1039 spills.
+
+Tests: `LoopUnroll/RISCV/xrepeat-vrf-keep-small-loops.ll` (`@fdot_tc16` kept, `@isum_tc16`
+unrolled, `@fadd_tc8_alias` unrolled, `@fadd_tc8_noalias` and `@fadd_tc16_alias` kept, and the
+switch).
+
 ## Installing from scratch
 
 These steps build the modified clang on a fresh Linux machine. They reproduce the build used for
@@ -1923,6 +1966,7 @@ in that window.
 | `-fno-vectorize -fno-slp-vectorize` | No vectorization: scalar code, even with XRepeat. |
 | `-mllvm -riscv-xrepeat-loop-fusion=false` | No fusion of loops that share a load before the vectorizers (Phase 18). |
 | `-mllvm -riscv-xrepeat-fminmax=false` | Float clamps/ReLUs written as compare + select stay selects instead of becoming `fmin.s`/`fmax.s` (Phase 19). |
+| `-mllvm -riscv-xrepeat-keep-small-reductions=false` | Small float reduction loops are fully unrolled again (scalar), as before Phase 21; the rest of keep-small-loops stays. |
 | `-mllvm -riscv-xrepeat-keep-small-loops=false` | Small constant-trip-count loops are fully unrolled as usual, instead of kept rolled for the vectorizer (Phase 7). |
 | `-mllvm -force-vector-width=8` (or 16) | Force a vectorization factor, ignoring the cost model. Only for experiments; it can spill. |
 

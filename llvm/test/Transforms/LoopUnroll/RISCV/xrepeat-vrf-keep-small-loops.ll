@@ -2,6 +2,8 @@
 ; RUN:   | FileCheck %s --check-prefixes=CHECK,KEEP
 ; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes=loop-unroll-full -S < %s \
 ; RUN:   -riscv-xrepeat-keep-small-loops=false | FileCheck %s --check-prefixes=CHECK,UNROLL
+; RUN: opt -mtriple=riscv32 -mattr=+m,+xrepeat -passes=loop-unroll-full -S < %s \
+; RUN:   -riscv-xrepeat-keep-small-reductions=false | FileCheck %s --check-prefixes=CHECK,NORED
 
 ; XRepeat (VRF core): the early full unroll leaves small loops that the loop
 ; vectorizer can turn into whole 8- or 16-wide blocks rolled: a trip count that
@@ -135,6 +137,110 @@ loop:
   store float %r, ptr %pd
   %i1 = add nuw nsw i32 %i, 1
   %done = icmp eq i32 %i1, 8
+  br i1 %done, label %exit, label %loop
+exit:
+  ret void
+}
+
+; A float dot product of 16 elements, no store: kept, so the loop vectorizer
+; makes it one in-order fmadd.s + REPEAT per block (unrolled, SLP leaves an
+; in-order float reduction scalar).
+; CHECK-LABEL: define float @fdot_tc16(
+; KEEP:          br i1 %{{.*}}, label %exit, label %loop
+; UNROLL-NOT:    br i1
+; NORED-NOT:     br i1
+define float @fdot_tc16(ptr %a, ptr %b, float %s0) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %s = phi float [ %s0, %entry ], [ %s1, %loop ]
+  %pa = getelementptr inbounds float, ptr %a, i32 %i
+  %va = load float, ptr %pa
+  %pb = getelementptr inbounds float, ptr %b, i32 %i
+  %vb = load float, ptr %pb
+  %s1 = call float @llvm.fmuladd.f32(float %va, float %vb, float %s)
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, 16
+  br i1 %done, label %exit, label %loop
+exit:
+  ret float %s1
+}
+
+; An i32 sum: SLP vectorizes it unrolled, so it is unrolled as before.
+; CHECK-LABEL: define i32 @isum_tc16(
+; CHECK-NOT:     br i1
+define i32 @isum_tc16(ptr %a) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %s = phi i32 [ 0, %entry ], [ %s1, %loop ]
+  %pa = getelementptr inbounds i32, ptr %a, i32 %i
+  %va = load i32, ptr %pa
+  %s1 = add i32 %s, %va
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, 16
+  br i1 %done, label %exit, label %loop
+exit:
+  ret i32 %s1
+}
+
+; 8 iterations with a store that may alias the load: the loop vectorizer emits
+; no runtime alias check below 16 iterations, so it is unrolled as before.
+; CHECK-LABEL: define void @fadd_tc8_alias(
+; CHECK-NOT:     br i1
+define void @fadd_tc8_alias(ptr %d, ptr %a) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %pa = getelementptr inbounds float, ptr %a, i32 %i
+  %va = load float, ptr %pa
+  %r = fadd float %va, 2.5
+  %pd = getelementptr inbounds float, ptr %d, i32 %i
+  store float %r, ptr %pd
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, 8
+  br i1 %done, label %exit, label %loop
+exit:
+  ret void
+}
+
+; ... kept with noalias pointers, or with 16 iterations (checks allowed).
+; CHECK-LABEL: define void @fadd_tc8_noalias(
+; KEEP:          br i1 %{{.*}}, label %exit, label %loop
+define void @fadd_tc8_noalias(ptr noalias %d, ptr noalias %a) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %pa = getelementptr inbounds float, ptr %a, i32 %i
+  %va = load float, ptr %pa
+  %r = fadd float %va, 2.5
+  %pd = getelementptr inbounds float, ptr %d, i32 %i
+  store float %r, ptr %pd
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, 8
+  br i1 %done, label %exit, label %loop
+exit:
+  ret void
+}
+
+; CHECK-LABEL: define void @fadd_tc16_alias(
+; KEEP:          br i1 %{{.*}}, label %exit, label %loop
+define void @fadd_tc16_alias(ptr %d, ptr %a) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i1, %loop ]
+  %pa = getelementptr inbounds float, ptr %a, i32 %i
+  %va = load float, ptr %pa
+  %r = fadd float %va, 2.5
+  %pd = getelementptr inbounds float, ptr %d, i32 %i
+  store float %r, ptr %pd
+  %i1 = add nuw nsw i32 %i, 1
+  %done = icmp eq i32 %i1, 16
   br i1 %done, label %exit, label %loop
 exit:
   ret void
