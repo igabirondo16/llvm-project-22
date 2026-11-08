@@ -238,8 +238,153 @@ exit:
   ret void
 }
 
+; A convolution with its kernel loops unrolled: a sequence of inner loops, the
+; accumulator flowing from one into the next. Every inner loop is jammed.
+@IN = global [128 x float] zeroinitializer
+@WC = global [32 x [128 x float]] zeroinitializer
+@OC = global [32 x float] zeroinitializer
+
+define void @conv2() {
+; CHECK-LABEL: @conv2(
+; COL:         inner1:
+; COL-COUNT-16:  call float @llvm.fmuladd.f32
+; COL-NOT:       call float @llvm.fmuladd.f32
+; COL:           br i1 {{.*}}, label %mid, label %inner1, !llvm.loop [[L1:![0-9]+]]
+; COL:         inner2:
+; COL-COUNT-16:  call float @llvm.fmuladd.f32
+; COL-NOT:       call float @llvm.fmuladd.f32
+; COL:           br i1 {{.*}}, label %latch, label %inner2, !llvm.loop [[L2:![0-9]+]]
+; COL:         latch:
+; COL-COUNT-16:  store float
+; COL:           icmp eq i32 {{.*}}, 32
+; ROW:         inner1:
+; ROW-COUNT-4:   call float @llvm.fmuladd.f32
+; ROW-NOT:       call float @llvm.fmuladd.f32
+; ROW:         inner2:
+; ROW-COUNT-4:   call float @llvm.fmuladd.f32
+; ROW-NOT:       call float @llvm.fmuladd.f32
+; NONE:        inner1:
+; NONE-COUNT-1:  call float @llvm.fmuladd.f32
+; NONE:        inner2:
+; NONE-COUNT-1:  call float @llvm.fmuladd.f32
+; NONE-NOT:      call float @llvm.fmuladd.f32
+; CHECK:       ret void
+;
+; O2-LABEL: @conv2(
+; O2:         call <8 x float> @llvm.experimental.vp.strided.load.v8f32.p0.i32(ptr {{.*}}, i32 512,
+; O2:         call <8 x float> @llvm.fmuladd.v8f32(
+; O2:         call <8 x float> @llvm.experimental.vp.strided.load.v8f32.p0.i32(ptr {{.*}}, i32 512,
+; O2:         call <8 x float> @llvm.fmuladd.v8f32(
+; O2-NOT:     call float @llvm.fmuladd.f32
+; O2:         ret void
+entry:
+  br label %outer
+
+outer:
+  %c = phi i32 [ 0, %entry ], [ %c.next, %latch ]
+  %pb = getelementptr inbounds [32 x float], ptr @B, i32 0, i32 %c
+  %init = load float, ptr %pb
+  br label %inner1
+
+inner1:
+  %i = phi i32 [ 0, %outer ], [ %i.next, %inner1 ]
+  %acc = phi float [ %init, %outer ], [ %acc.next, %inner1 ]
+  %px = getelementptr inbounds [128 x float], ptr @IN, i32 0, i32 %i
+  %x = load float, ptr %px
+  %pw = getelementptr inbounds [32 x [128 x float]], ptr @WC, i32 0, i32 %c, i32 %i
+  %w = load float, ptr %pw
+  %acc.next = call float @llvm.fmuladd.f32(float %x, float %w, float %acc)
+  %i.next = add nuw nsw i32 %i, 1
+  %i.done = icmp eq i32 %i.next, 64
+  br i1 %i.done, label %mid, label %inner1
+
+mid:
+  br label %inner2
+
+inner2:
+  %j = phi i32 [ 0, %mid ], [ %j.next, %inner2 ]
+  %acc2 = phi float [ %acc.next, %mid ], [ %acc2.next, %inner2 ]
+  %j64 = add nuw nsw i32 %j, 64
+  %px2 = getelementptr inbounds [128 x float], ptr @IN, i32 0, i32 %j64
+  %x2 = load float, ptr %px2
+  %pw2 = getelementptr inbounds [32 x [128 x float]], ptr @WC, i32 0, i32 %c, i32 %j64
+  %w2 = load float, ptr %pw2
+  %acc2.next = call float @llvm.fmuladd.f32(float %x2, float %w2, float %acc2)
+  %j.next = add nuw nsw i32 %j, 1
+  %j.done = icmp eq i32 %j.next, 64
+  br i1 %j.done, label %latch, label %inner2
+
+latch:
+  %v = fmul float %acc2.next, 5.000000e-01
+  %po = getelementptr inbounds [32 x float], ptr @OC, i32 0, i32 %c
+  store float %v, ptr %po
+  %c.next = add nuw nsw i32 %c, 1
+  %c.done = icmp eq i32 %c.next, 32
+  br i1 %c.done, label %exit, label %outer
+
+exit:
+  ret void
+}
+
+; The same, but the result is stored into an array the inner loops read:
+; jamming would move later outputs' loads above earlier outputs' stores.
+define void @conv2_alias() {
+; CHECK-LABEL: @conv2_alias(
+; CHECK:       inner1:
+; CHECK-COUNT-1: call float @llvm.fmuladd.f32
+; CHECK:       inner2:
+; CHECK-COUNT-1: call float @llvm.fmuladd.f32
+; CHECK-NOT:     call float @llvm.fmuladd.f32
+; CHECK:       ret void
+entry:
+  br label %outer
+
+outer:
+  %c = phi i32 [ 0, %entry ], [ %c.next, %latch ]
+  br label %inner1
+
+inner1:
+  %i = phi i32 [ 0, %outer ], [ %i.next, %inner1 ]
+  %acc = phi float [ 0.0, %outer ], [ %acc.next, %inner1 ]
+  %px = getelementptr inbounds [128 x float], ptr @IN, i32 0, i32 %i
+  %x = load float, ptr %px
+  %pw = getelementptr inbounds [32 x [128 x float]], ptr @WC, i32 0, i32 %c, i32 %i
+  %w = load float, ptr %pw
+  %acc.next = call float @llvm.fmuladd.f32(float %x, float %w, float %acc)
+  %i.next = add nuw nsw i32 %i, 1
+  %i.done = icmp eq i32 %i.next, 64
+  br i1 %i.done, label %mid, label %inner1
+
+mid:
+  br label %inner2
+
+inner2:
+  %j = phi i32 [ 0, %mid ], [ %j.next, %inner2 ]
+  %acc2 = phi float [ %acc.next, %mid ], [ %acc2.next, %inner2 ]
+  %px2 = getelementptr inbounds [128 x float], ptr @IN, i32 0, i32 %j
+  %x2 = load float, ptr %px2
+  %pw2 = getelementptr inbounds [32 x [128 x float]], ptr @WC, i32 0, i32 %c, i32 %j
+  %w2 = load float, ptr %pw2
+  %acc2.next = call float @llvm.fmuladd.f32(float %x2, float %w2, float %acc2)
+  %j.next = add nuw nsw i32 %j, 1
+  %j.done = icmp eq i32 %j.next, 64
+  br i1 %j.done, label %latch, label %inner2
+
+latch:
+  %po = getelementptr inbounds [128 x float], ptr @IN, i32 0, i32 %c
+  store float %acc2.next, ptr %po
+  %c.next = add nuw nsw i32 %c, 1
+  %c.done = icmp eq i32 %c.next, 32
+  br i1 %c.done, label %exit, label %outer
+
+exit:
+  ret void
+}
+
 ; COL: [[COLINNER]] = distinct !{[[COLINNER]], [[ISVEC:![0-9]+]]}
 ; COL: [[ISVEC]] = !{!"llvm.loop.isvectorized", i32 1}
+; COL: [[L1]] = distinct !{[[L1]], [[ISVEC]]}
+; COL: [[L2]] = distinct !{[[L2]], [[ISVEC]]}
 ; ROW-NOT: llvm.loop.isvectorized
 
 declare float @llvm.fmuladd.f32(float, float, float)

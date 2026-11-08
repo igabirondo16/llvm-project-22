@@ -57,6 +57,8 @@
 #include "llvm/Transforms/Utils/LCSSA.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/UnrollLoop.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Transforms/Scalar/IndVarSimplify.h"
 #include "llvm/Transforms/Scalar/LoopFuse.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
@@ -965,21 +967,147 @@ namespace {
 // vectorizer counts x and every row as live blocks (see getNumberOfRegisters)
 // and rejects more than five.
 //
-// Only nests where this is the whole story are touched: an inner loop with
-// one float fadd/fmuladd reduction, no stores, and loads that are either
+// A convolution, once its kernel loops are fully unrolled, has a sequence of
+// such inner loops instead of one, the accumulator flowing from each into the
+// next:
+//   for (c) { acc = b[c]; for (i) acc += ...; for (i) acc += ...; ...;
+//             out[c] = f(acc); }
+// LLVM's unroll-and-jam only handles one inner loop, so such a nest is jammed
+// here (jamSequence): every inner loop gets the N accumulators, each lane still
+// in source order.
+//
+// Only nests where this is the whole story are touched: inner loops with one
+// float fadd/fmuladd reduction each, no stores, and loads that are either
 // invariant in the output loop (x) or step by a constant with it (w's rows),
 // an output loop with a constant trip count that is a multiple of the count
-// and nothing but the inner loop inside it.
+// and nothing but the inner loop(s) inside it.
 class RISCVXRepeatUnrollAndJamPass
     : public PassInfoMixin<RISCVXRepeatUnrollAndJamPass> {
   const RISCVTargetMachine &TM;
 
+  // An inner loop of a candidate nest: one float fadd/fmuladd reduction, the
+  // other header phis inductions, no stores or calls, loads as above.
+  static bool isJammableInner(Loop *Sub, Loop *L, ScalarEvolution &SE) {
+    if (!Sub->isInnermost() || !Sub->isLoopSimplifyForm())
+      return false;
+    unsigned NumRed = 0;
+    for (PHINode &Phi : Sub->getHeader()->phis()) {
+      RecurrenceDescriptor RD;
+      if (RecurrenceDescriptor::isReductionPHI(&Phi, Sub, RD, nullptr, nullptr,
+                                               nullptr, &SE)) {
+        RecurKind K = RD.getRecurrenceKind();
+        if (!Phi.getType()->isFloatTy() ||
+            (K != RecurKind::FAdd && K != RecurKind::FMulAdd))
+          return false;
+        ++NumRed;
+      } else if (!SE.isSCEVable(Phi.getType()) ||
+                 !isa<SCEVAddRecExpr>(SE.getSCEV(&Phi))) {
+        return false;
+      }
+    }
+    if (NumRed != 1)
+      return false;
+
+    for (BasicBlock *BB : Sub->blocks())
+      for (Instruction &I : *BB) {
+        if (I.mayWriteToMemory() ||
+            (isa<CallBase>(I) && !isa<IntrinsicInst>(I)))
+          return false;
+        auto *LI = dyn_cast<LoadInst>(&I);
+        if (!LI)
+          continue;
+        if (!LI->isSimple())
+          return false;
+        const SCEV *Ptr = SE.getSCEV(LI->getPointerOperand());
+        auto *AR = dyn_cast<SCEVAddRecExpr>(Ptr);
+        if (!AR || AR->getLoop() != Sub || !AR->isAffine())
+          return false;
+        const SCEV *Start = AR->getStart();
+        if (SE.isLoopInvariant(Start, L))
+          continue;
+        auto *ARL = dyn_cast<SCEVAddRecExpr>(Start);
+        if (!ARL || ARL->getLoop() != L || !ARL->isAffine() ||
+            !isa<SCEVConstant>(ARL->getStepRecurrence(SE)))
+          return false;
+      }
+    return SE.isLoopInvariant(SE.getBackedgeTakenCount(Sub), L);
+  }
+
+  // The shape jamSequence handles: L's body is a chain of single blocks and
+  // single-block inner loops,
+  //   Header -> Sub1 -> Seg1 -> Sub2 -> ... -> SubM -> SegM (the latch),
+  // every header phi of L an induction with a constant step, nothing defined
+  // in L used outside it, and memory that the jam may reorder: stores only in
+  // the latch block, to identified objects that nothing in L loads from (the
+  // jam moves the loads of copies 1..N-1 above the stores of copy 0, and
+  // keeps the stores in order).
+  static bool getSequence(Loop *L, ScalarEvolution &SE,
+                          SmallVectorImpl<BasicBlock *> &Segs,
+                          SmallVectorImpl<Loop *> &Subs) {
+    BasicBlock *Latch = L->getLoopLatch();
+    BasicBlock *BB = L->getHeader();
+    Segs.push_back(BB);
+    while (BB != Latch) {
+      auto *Br = dyn_cast<BranchInst>(BB->getTerminator());
+      if (!Br || Br->isConditional())
+        return false;
+      BasicBlock *Next = Br->getSuccessor(0);
+      auto It = find_if(L->getSubLoops(),
+                        [&](Loop *S) { return S->getHeader() == Next; });
+      if (It == L->getSubLoops().end())
+        return false;
+      Loop *Sub = *It;
+      BasicBlock *Exit = Sub->getExitBlock();
+      if (Sub->getNumBlocks() != 1 || Sub->getHeader() != Next || !Exit ||
+          Exit->getSinglePredecessor() != Next)
+        return false;
+      Subs.push_back(Sub);
+      Segs.push_back(BB = Exit);
+    }
+    if (Segs.size() + Subs.size() != L->getNumBlocks() || Subs.empty())
+      return false;
+
+    for (PHINode &Phi : L->getHeader()->phis()) {
+      auto *AR = dyn_cast<SCEVAddRecExpr>(
+          SE.isSCEVable(Phi.getType()) ? SE.getSCEV(&Phi)
+                                       : SE.getCouldNotCompute());
+      if (!AR || AR->getLoop() != L || !AR->isAffine() ||
+          !isa<SCEVConstant>(AR->getStepRecurrence(SE)) ||
+          !(Phi.getType()->isIntegerTy() || Phi.getType()->isPointerTy()))
+        return false;
+    }
+
+    SmallVector<const Value *, 8> StoreObjs, LoadObjs;
+    for (BasicBlock *B : L->blocks())
+      for (Instruction &I : *B) {
+        for (User *U : I.users())
+          if (!L->contains(cast<Instruction>(U)))
+            return false;
+        if (auto *St = dyn_cast<StoreInst>(&I)) {
+          if (B != Latch || !St->isSimple())
+            return false;
+          StoreObjs.push_back(getUnderlyingObject(St->getPointerOperand()));
+        } else if (auto *Ld = dyn_cast<LoadInst>(&I)) {
+          if (!Ld->isSimple())
+            return false;
+          LoadObjs.push_back(getUnderlyingObject(Ld->getPointerOperand()));
+        } else if (I.mayHaveSideEffects() || I.mayReadOrWriteMemory()) {
+          return false;
+        }
+      }
+    for (const Value *SObj : StoreObjs) {
+      if (!isIdentifiedObject(SObj))
+        return false;
+      for (const Value *LObj : LoadObjs)
+        if (LObj == SObj || !isIdentifiedObject(LObj))
+          return false;
+    }
+    return true;
+  }
+
   // The number of outputs to jam for L, or 0 if L isn't a candidate.
   static unsigned getCount(Loop *L, ScalarEvolution &SE) {
-    if (L->getSubLoops().size() != 1 || !L->isLoopSimplifyForm())
-      return 0;
-    Loop *Sub = L->getSubLoops()[0];
-    if (!Sub->isInnermost() || !Sub->isLoopSimplifyForm())
+    if (L->isInnermost() || !L->isLoopSimplifyForm() || !L->getExitBlock())
       return 0;
     unsigned TC = SE.getSmallConstantTripCount(L);
     SmallVector<unsigned, 2> Counts;
@@ -989,53 +1117,129 @@ class RISCVXRepeatUnrollAndJamPass
       Counts.push_back(4);
     else
       Counts.append({16, 8});
-    unsigned Count = 0;
     for (unsigned C : Counts)
       if (C >= 2 && TC >= C && TC % C == 0) {
-        Count = C;
-        break;
+        for (Loop *Sub : L->getSubLoops())
+          if (!isJammableInner(Sub, L, SE))
+            return 0;
+        return C;
       }
-    if (!Count)
-      return 0;
+    return 0;
+  }
 
-    unsigned NumRed = 0;
-    for (PHINode &Phi : Sub->getHeader()->phis()) {
-      RecurrenceDescriptor RD;
-      if (RecurrenceDescriptor::isReductionPHI(&Phi, Sub, RD, nullptr, nullptr,
-                                               nullptr, &SE)) {
-        RecurKind K = RD.getRecurrenceKind();
-        if (!Phi.getType()->isFloatTy() ||
-            (K != RecurKind::FAdd && K != RecurKind::FMulAdd))
-          return 0;
-        ++NumRed;
-      } else if (!SE.isSCEVable(Phi.getType()) ||
-                 !isa<SCEVAddRecExpr>(SE.getSCEV(&Phi))) {
-        return 0;
-      }
+  // Unroll L by N and jam every copy into the same blocks: in each block of
+  // the chain (see getSequence), copies 1..N-1 of its instructions follow the
+  // original's; each inner loop gets copies of its reduction phi and body
+  // (its induction is shared); the header phis step N times as far, and the
+  // loop exits where copy N-1 would have. Nothing but instructions changes:
+  // the blocks, the loops and the dominator tree stay as they are.
+  static void jamSequence(Loop *L, unsigned N, ArrayRef<BasicBlock *> Segs,
+                          ArrayRef<Loop *> Subs, ScalarEvolution &SE) {
+    std::vector<std::unique_ptr<ValueToValueMapTy>> VMapStore;
+    for (unsigned J = 0; J < N; ++J)
+      VMapStore.push_back(std::make_unique<ValueToValueMapTy>());
+    auto VMap = [&](unsigned J) -> ValueToValueMapTy & { return *VMapStore[J]; };
+    auto Remap = [](Instruction *I, ValueToValueMapTy &VM) {
+      RemapInstruction(I, VM,
+                       RF_IgnoreMissingLocals | RF_NoModuleLevelChanges);
+    };
+    // The non-phi instructions of BB but the terminator.
+    auto BodyOf = [](BasicBlock *BB) {
+      SmallVector<Instruction *, 32> Orig;
+      for (Instruction &I : *BB)
+        if (!isa<PHINode>(I) && !I.isTerminator())
+          Orig.push_back(&I);
+      return Orig;
+    };
+    // Clone them for each copy, after the original ones.
+    auto CloneBody = [&](BasicBlock *BB, ArrayRef<Instruction *> Orig) {
+      for (unsigned J = 1; J < N; ++J)
+        for (Instruction *I : Orig) {
+          Instruction *C = I->clone();
+          C->insertBefore(BB->getTerminator()->getIterator());
+          if (I->hasName())
+            C->setName(I->getName() + ".jam" + Twine(J));
+          VMap(J)[I] = C;
+          Remap(C, VMap(J));
+        }
+    };
+    // Copy J of V (V itself if it's the same in every copy).
+    auto Map = [&](unsigned J, Value *V) {
+      Value *C = VMap(J).lookup(V);
+      return C ? C : V;
+    };
+
+    // Copy J of a header phi: the phi plus J steps.
+    BasicBlock *Header = L->getHeader();
+    SmallVector<Instruction *, 32> HeaderOrig = BodyOf(Header);
+    IRBuilder<> B(&*Header->getFirstInsertionPt());
+    SmallVector<PHINode *, 4> HeaderPhis;
+    for (PHINode &Phi : Header->phis()) {
+      HeaderPhis.push_back(&Phi);
+      auto *AR = cast<SCEVAddRecExpr>(SE.getSCEV(&Phi));
+      const APInt &Step =
+          cast<SCEVConstant>(AR->getStepRecurrence(SE))->getAPInt();
+      for (unsigned J = 1; J < N; ++J)
+        VMap(J)[&Phi] =
+            Phi.getType()->isPointerTy()
+                ? B.CreatePtrAdd(&Phi, B.getInt(Step * J))
+                : B.CreateAdd(&Phi, ConstantInt::get(Phi.getType(), Step * J));
     }
-    if (NumRed != 1)
-      return 0;
+    CloneBody(Header, HeaderOrig);
 
-    for (BasicBlock *BB : Sub->blocks())
-      for (Instruction &I : *BB) {
-        if (I.mayWriteToMemory() || (isa<CallBase>(I) && !isa<IntrinsicInst>(I)))
-          return 0;
-        auto *LI = dyn_cast<LoadInst>(&I);
-        if (!LI)
-          continue;
-        const SCEV *Ptr = SE.getSCEV(LI->getPointerOperand());
-        auto *AR = dyn_cast<SCEVAddRecExpr>(Ptr);
-        if (!AR || AR->getLoop() != Sub || !AR->isAffine())
-          return 0;
-        const SCEV *Start = AR->getStart();
-        if (SE.isLoopInvariant(Start, L))
-          continue;
-        auto *ARL = dyn_cast<SCEVAddRecExpr>(Start);
-        if (!ARL || ARL->getLoop() != L || !ARL->isAffine() ||
-            !isa<SCEVConstant>(ARL->getStepRecurrence(SE)))
-          return 0;
+    for (auto [K, Sub] : enumerate(Subs)) {
+      BasicBlock *Body = Sub->getHeader();
+      BasicBlock *Pre = Sub->getLoopPreheader();
+      // The reduction phi gets a copy per output; the induction is shared.
+      SmallVector<std::pair<PHINode *, SmallVector<PHINode *, 16>>, 2> Reds;
+      SmallVector<PHINode *, 4> BodyPhis;
+      for (PHINode &Phi : Body->phis())
+        if (Phi.getType()->isFloatTy())
+          BodyPhis.push_back(&Phi);
+      for (PHINode *PhiP : BodyPhis) {
+        PHINode &Phi = *PhiP;
+        SmallVector<PHINode *, 16> Copies(N, nullptr);
+        for (unsigned J = 1; J < N; ++J) {
+          Copies[J] = PHINode::Create(Phi.getType(), 2,
+                                      Phi.getName() + ".jam" + Twine(J));
+          Copies[J]->insertBefore(Body->getFirstNonPHIIt());
+          VMap(J)[&Phi] = Copies[J];
+        }
+        Reds.push_back({&Phi, std::move(Copies)});
       }
-    return Count;
+      CloneBody(Body, BodyOf(Body));
+      for (auto &[Phi, Copies] : Reds)
+        for (unsigned J = 1; J < N; ++J) {
+          Value *Init = Phi->getIncomingValueForBlock(Pre);
+          Value *Next = Phi->getIncomingValueForBlock(Body);
+          Copies[J]->addIncoming(Map(J, Init), Pre);
+          Copies[J]->addIncoming(Map(J, Next), Body);
+        }
+
+      // The block after the loop: its phis (LCSSA) and instructions.
+      BasicBlock *Seg = Segs[K + 1];
+      SmallVector<PHINode *, 4> SegPhis;
+      for (PHINode &Phi : Seg->phis())
+        SegPhis.push_back(&Phi);
+      for (PHINode *Phi : SegPhis)
+        for (unsigned J = 1; J < N; ++J) {
+          PHINode *C = cast<PHINode>(Phi->clone());
+          C->insertBefore(Seg->getFirstNonPHIIt());
+          C->setName(Phi->getName() + ".jam" + Twine(J));
+          VMap(J)[Phi] = C;
+          Remap(C, VMap(J));
+        }
+      CloneBody(Seg, BodyOf(Seg));
+    }
+
+    // Step N times as far, and exit where copy N-1 would have.
+    BasicBlock *Latch = L->getLoopLatch();
+    for (PHINode *Phi : HeaderPhis) {
+      Value *Next = Phi->getIncomingValueForBlock(Latch);
+      Phi->setIncomingValueForBlock(Latch, Map(N - 1, Next));
+    }
+    auto *Br = cast<BranchInst>(Latch->getTerminator());
+    Br->setCondition(Map(N - 1, Br->getCondition()));
   }
 
 public:
@@ -1061,26 +1265,38 @@ public:
     auto &ORE = FAM.getResult<OptimizationRemarkEmitterAnalysis>(F);
     bool Changed = false;
     for (auto [L, Count] : Candidates) {
-      Loop *Outermost = L;
-      while (Loop *P = Outermost->getParentLoop())
-        Outermost = P;
-      Changed |= formLCSSARecursively(*Outermost, DT, &LI, &SE);
-      if (!isSafeToUnrollAndJam(L, SE, DT, DI, LI))
-        continue;
-      Loop *Sub = L->getSubLoops()[0];
-      unsigned TC = SE.getSmallConstantTripCount(L);
-      if (UnrollAndJamLoop(L, Count, TC, TC, /*UnrollRemainder=*/false, &LI,
-                           &SE, &DT, &AC, &TTI, &ORE) ==
-          LoopUnrollResult::Unmodified)
-        continue;
+      SmallVector<Loop *, 9> Subs;
+      if (L->getSubLoops().size() > 1) {
+        // A sequence of inner loops (a convolution): jammed here.
+        SmallVector<BasicBlock *, 10> Segs;
+        if (!getSequence(L, SE, Segs, Subs))
+          continue;
+        jamSequence(L, Count, Segs, Subs, SE);
+        SE.forgetLoop(L);
+      } else {
+        // One inner loop: LLVM's unroll-and-jam.
+        Loop *Outermost = L;
+        while (Loop *P = Outermost->getParentLoop())
+          Outermost = P;
+        Changed |= formLCSSARecursively(*Outermost, DT, &LI, &SE);
+        if (!isSafeToUnrollAndJam(L, SE, DT, DI, LI))
+          continue;
+        Subs.push_back(L->getSubLoops()[0]);
+        unsigned TC = SE.getSmallConstantTripCount(L);
+        if (UnrollAndJamLoop(L, Count, TC, TC, /*UnrollRemainder=*/false, &LI,
+                             &SE, &DT, &AC, &TTI, &ORE) ==
+            LoopUnrollResult::Unmodified)
+          continue;
+      }
       Changed = true;
-      // The jammed inner loop is Sub (the copies are merged into it). Keep
-      // the outer loop as it is now, and in column mode keep the loop
-      // vectorizer off the inner loop: SLP vectorizes across the jammed
-      // accumulators instead.
+      // The jammed inner loops are the original ones (the copies are merged
+      // into them). Keep the outer loop as it is now, and in column mode keep
+      // the loop vectorizer off the inner loops: SLP vectorizes across the
+      // jammed accumulators instead.
       addStringMetadataToLoop(L, "llvm.loop.unroll.disable");
       if (XRepeatUnrollJam == XRepeatUJMode::Column)
-        addStringMetadataToLoop(Sub, "llvm.loop.isvectorized", 1);
+        for (Loop *Sub : Subs)
+          addStringMetadataToLoop(Sub, "llvm.loop.isvectorized", 1);
     }
     if (!Changed)
       return PreservedAnalyses::all();

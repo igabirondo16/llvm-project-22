@@ -1921,6 +1921,49 @@ the RTL. resnet8 barely moves: its convolutions are `c → ky → kx → i` nest
 the output loop) and the pass only handles one. The dense epilogue stays scalar: `v > 127 ? 127 : v`
 isn't exactly `fmin` (NaN), so the clamps keep their compares and branches.
 
+## Phase 23 — unroll-and-jam of convolutions (a sequence of inner loops)
+
+With `k` constant after inlining, the early full unroll removes a 3×3 convolution's `ky`/`kx`
+loops. The output-channel loop then reaches the Phase 22 pass with **nine** inner loops in a row,
+the accumulator flowing from one into the next:
+```
+for (c) { acc = b[c]; for (i) acc += ...(0,0); for (i) acc += ...(0,1); ... ×9; out[c] = f(acc); }
+```
+These 3×3 layers are about 94% of resnet8's MACs. LLVM's `UnrollAndJamLoop` only handles one inner
+loop, and fusing the nine loops would reorder the sum. So for more than one inner loop the pass now
+jams the nest itself (`jamSequence`):
+
+- **Shape** (`getSequence`): the body of `c` is a chain of single blocks and single-block inner
+  loops, `header → loop₁ → block → loop₂ → … → loopₘ → latch`. Every header phi of `c` is an
+  induction with a constant step, and nothing defined in the nest is used outside it. Each inner
+  loop must pass the Phase 22 checks.
+- **Memory:** stores are allowed only in the latch block, and only to identified objects that
+  nothing in the nest loads. The jam moves the loads of outputs `c+1..c+N-1` above the stores of
+  output `c`, and keeps the stores in order.
+- **Transform:** in every block, copies 1..N-1 of its instructions follow the original's, copy `j`
+  using `c + j·step`. Each inner loop gets N copies of its reduction phi, while its induction stays
+  shared. The phis of `c` step N times as far, and the loop exits where copy N-1 would have. Only
+  instructions are added: the blocks, the loops and the dominator tree are unchanged.
+
+Column mode marks every inner loop `isvectorized`, so SLP gives each of the nine loops the bert
+inner loop: one `flw` of x, one strided weight block per 8 outputs (stride `k·k·ci` floats), and
+one `fmadd.s` burst with independent lanes (mask 1011). The 16 accumulators stay in two blocks
+across all nine loops. Row mode jams 4 outputs and leaves each loop to the loop vectorizer.
+
+resnet8 f32, emulator window 0..5 (checksum PASS in both modes; the other benchmarks are unchanged
+from Phase 22; 59 differential kernels same; i32 table identical):
+
+| | instructions | steps |
+|---|---|---|
+| Phase 22 (column) | 18,597,687 | 49,822,510 |
+| Phase 23 column | 12,311,796 (−34%) | **33,386,759 (−33%)** |
+| Phase 23 row | 11,767,353 | 35,257,904 |
+
+Known cost: in the 16-channel layers, 16 jammed outputs cover all of `c`. The bias/residual block
+loads then become invariant in the pixel loops, LICM hoists them, and they are spilled across the
+convolution: 72 FP spill/reload instructions in the binary, against 8 before. conv1 (`ci = 3`, its
+`i` loops fully unrolled) isn't touched: `c` is innermost there.
+
 ## Compiling your own code for XRepeat
 
 Write plain C; there are no intrinsics or pragmas. The vectorizers decide what goes into
@@ -2028,7 +2071,7 @@ in that window.
 | `-mllvm -riscv-xrepeat-loop-fusion=false` | No fusion of loops that share a load before the vectorizers (Phase 18). |
 | `-mllvm -riscv-xrepeat-fminmax=false` | Float clamps/ReLUs written as compare + select stay selects instead of becoming `fmin.s`/`fmax.s` (Phase 19). |
 | `-mllvm -riscv-xrepeat-keep-small-reductions=false` | Small float reduction loops are fully unrolled again (scalar), as before Phase 21; the rest of keep-small-loops stays. |
-| `-mllvm -riscv-xrepeat-unroll-jam=off\|row\|column` | Unroll-and-jam of the outputs of a float matrix-vector product (Phase 22): `column` (default) vectorizes across 16 or 8 outputs with independent lanes, `row` jams 4 and leaves them to the loop vectorizer (serial bursts, the hand-written layout), `off` disables it. `-riscv-xrepeat-unroll-jam-count=N` overrides the count. |
+| `-mllvm -riscv-xrepeat-unroll-jam=off\|row\|column` | Unroll-and-jam of the outputs of a float matrix-vector product or convolution (Phases 22, 23): `column` (default) vectorizes across 16 or 8 outputs with independent lanes, `row` jams 4 and leaves them to the loop vectorizer (serial bursts, the hand-written layout), `off` disables it. `-riscv-xrepeat-unroll-jam-count=N` overrides the count. |
 | `-mllvm -riscv-xrepeat-keep-small-loops=false` | Small constant-trip-count loops are fully unrolled as usual, instead of kept rolled for the vectorizer (Phase 7). |
 | `-mllvm -force-vector-width=8` (or 16) | Force a vectorization factor, ignoring the cost model. Only for experiments; it can spill. |
 
